@@ -1,0 +1,18 @@
+# MCS exp2 — Phase 2 Braid Finetune (extended: epoch 41-50)
+# matte cond: ON  |  gate: ON (all blocks)
+base: configs/phase2_braid.yaml
+
+model:
+  zero_matte_cond: false
+
+training:
+  schedule: all
+  resume: checkpoints/mcs2_phase2/epoch_40.pth
+  batch_size: 16
+  epochs: 50
+
+checkpointing:
+  output_dir: checkpoints/mcs2_phase2/
+
+wandb:
+  tags: [mcs, mcs2, phase2, matte-cond, gate, ext50]

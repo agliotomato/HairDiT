@@ -1,0 +1,18 @@
+# MCS exp6 — Phase 1 Unbraid Pretrain
+# MatteCNN only: MatteCNN ON  |  raw matte (1ch): OFF (zeros)  |  gate: OFF
+# ctrl_cond = cat([sketch_lat + matte_feat, zeros(1ch)], dim=1)  (17ch)
+
+base: configs/phase1_unbraid.yaml
+
+model:
+  zero_raw_matte: true
+
+training:
+  schedule: none
+  batch_size: 16
+
+checkpointing:
+  output_dir: checkpoints/mcs6_phase1/
+
+wandb:
+  tags: [mcs, mcs6, phase1, matte-cnn-only, no-raw-matte, no-gate]

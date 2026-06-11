@@ -1,0 +1,19 @@
+# MCS exp4 — Phase 1 Unbraid Pretrain
+# matte cond: OFF  |  gate: ON (all blocks)
+# ctrl_cond = cat([sketch_lat + zeros, zeros], dim=1) → sketch only
+# block_samples multiplied by soft matte token mask
+
+base: configs/phase1_unbraid.yaml
+
+model:
+  zero_matte_cond: true
+
+training:
+  schedule: all
+  batch_size: 16
+
+checkpointing:
+  output_dir: checkpoints/mcs4_phase1/
+
+wandb:
+  tags: [mcs, mcs4, phase1, no-matte-cond, gate]

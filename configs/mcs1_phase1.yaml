@@ -1,0 +1,18 @@
+# MCS exp1 — Phase 1 Unbraid Pretrain
+# matte cond: ON  |  gate: OFF
+# ctrl_cond = cat([sketch_lat + matte_feat, matte_raw], dim=1)  (17ch)
+
+base: configs/phase1_unbraid.yaml
+
+model:
+  zero_matte_cond: false
+
+training:
+  schedule: none
+  batch_size: 16
+
+checkpointing:
+  output_dir: checkpoints/mcs1_phase1/
+
+wandb:
+  tags: [mcs, mcs1, phase1, matte-cond, no-gate]

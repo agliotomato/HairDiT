@@ -1,0 +1,18 @@
+# MCS exp4 — Phase 2 Braid Finetune
+# matte cond: OFF  |  gate: ON (all blocks)
+
+base: configs/phase2_braid.yaml
+
+model:
+  zero_matte_cond: true
+
+training:
+  schedule: all
+  resume_from: checkpoints/mcs4_phase1/epoch_40.pth
+  batch_size: 16
+
+checkpointing:
+  output_dir: checkpoints/mcs4_phase2/
+
+wandb:
+  tags: [mcs, mcs4, phase2, no-matte-cond, gate]

@@ -1,0 +1,19 @@
+# MCS exp1 — Phase 2 Extension (epoch 40 → 50)
+# mcs1_phase2 checkpoint에서 10 epoch 추가 학습
+
+base: configs/phase2_braid.yaml
+
+model:
+  zero_matte_cond: false
+
+training:
+  schedule: none
+  resume: checkpoints/mcs1_phase2/epoch_40.pth
+  epochs: 50
+  batch_size: 16
+
+checkpointing:
+  output_dir: checkpoints/mcs1_phase2/
+
+wandb:
+  tags: [mcs, mcs1, phase2-ext, matte-cond, no-gate]

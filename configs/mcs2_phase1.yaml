@@ -1,0 +1,20 @@
+# MCS exp2 — Phase 1 Unbraid Pretrain
+# matte cond: ON  |  gate: ON (all blocks)
+# ctrl_cond = cat([sketch_lat + matte_feat, matte_raw], dim=1)  (17ch)
+# block_samples multiplied by soft matte token mask
+
+base: configs/phase1_unbraid.yaml
+
+model:
+  zero_matte_cond: false
+
+training:
+  schedule: all
+  resume: checkpoints/mcs2_phase1/epoch_20.pth
+  batch_size: 16
+
+checkpointing:
+  output_dir: checkpoints/mcs2_phase1/
+
+wandb:
+  tags: [mcs, mcs2, phase1, matte-cond, gate]

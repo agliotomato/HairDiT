@@ -1,0 +1,18 @@
+# MCS exp6 — Phase 2 Braid Finetune
+# MatteCNN only: MatteCNN ON  |  raw matte (1ch): OFF (zeros)  |  gate: OFF
+
+base: configs/phase2_braid.yaml
+
+model:
+  zero_raw_matte: true
+
+training:
+  schedule: none
+  resume_from: checkpoints/mcs6_phase1/epoch_40.pth
+  batch_size: 16
+
+checkpointing:
+  output_dir: checkpoints/mcs6_phase2/
+
+wandb:
+  tags: [mcs, mcs6, phase2, matte-cnn-only, no-raw-matte, no-gate]

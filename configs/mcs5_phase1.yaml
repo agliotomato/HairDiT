@@ -1,0 +1,19 @@
+# MCS exp5 — Phase 1 Unbraid Pretrain
+# matte cond: raw downsample only  |  MatteCNN: OFF  |  gate: OFF
+# ctrl_cond = cat([sketch_lat, matte_raw], dim=1)  (17ch)
+
+base: configs/phase1_unbraid.yaml
+
+model:
+  zero_matte_cond: false
+  zero_matte_feat: true
+
+training:
+  schedule: none
+  batch_size: 16
+
+checkpointing:
+  output_dir: checkpoints/mcs5_phase1/
+
+wandb:
+  tags: [mcs, mcs5, phase1, raw-matte-only, no-cnn, no-gate]
