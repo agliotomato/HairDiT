@@ -35,5 +35,9 @@ cross_id/
 outputs/
 checkpoints/
 src/__pycache__/
-
+T3/*.txt
+T3/*.log
+T3/*.Zone.Identifier
+T3/eval
+T3/
 
