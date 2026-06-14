@@ -24,6 +24,7 @@ def render(version: str):
         for r in csv.DictReader(f):
             data[(r["stem"], r["model"], r["variant"])] = (
                 float(r["tracking_L"]),
+                float(r["tracking_hue"]) if r["tracking_hue"] not in ("", "nan") else float("nan"),
                 float(r["tracking_b"]),
                 float(r["tracking_C"]))
 
@@ -44,14 +45,14 @@ def render(version: str):
             out.append(f"| **{mcs} ({label})** | " + " | ".join(cells) + " |")
         out.append("")
 
-        # 측정 표 (variant 3개 × L/b/C)
-        out.append("| 모델 | warm L/b/C | cool L/b/C | dim L/b/C |")
+        # 측정 표 (variant 3개 × L/hue/b/C)
+        out.append("| 모델 | warm L/hue/b/C | cool L/hue/b/C | dim L/hue/b/C |")
         out.append("|------|:---:|:---:|:---:|")
         for mcs, label in MODELS:
             cells = []
             for v in ["warm", "cool", "dim"]:
-                L, b, C = data[(stem, mcs, v)]
-                cells.append(f"{L:+.2f} / {b:+.2f} / {C:+.2f}")
+                L, hue, b, C = data[(stem, mcs, v)]
+                cells.append(f"{L:+.2f} / {hue:+.2f} / {b:+.2f} / {C:+.2f}")
             out.append(f"| {mcs} ({label}) | " + " | ".join(cells) + " |")
         out.append("")
 
