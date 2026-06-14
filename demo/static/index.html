@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>HairDiT Demo</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>HairDiT — Sketch → Hair</h1>
+    <span id="status" class="status">loading…</span>
+  </header>
+
+  <section class="toolbar">
+    <div class="group">
+      <label>Face
+        <input type="file" id="face-input" accept="image/*" />
+      </label>
+      <button id="clear-face" class="ghost">x</button>
+    </div>
+
+    <div class="group">
+      <span class="label">Tool</span>
+      <div class="seg" id="tool-seg">
+        <button data-tool="matte-brush" class="active">Matte brush</button>
+        <button data-tool="matte-erase">Matte erase</button>
+        <button data-tool="sketch-pen">Sketch pen</button>
+        <button data-tool="sketch-erase">Sketch erase</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <label>Color
+        <input type="color" id="color" value="#8b5a2b" />
+      </label>
+      <label>Size <span id="size-val">20</span>
+        <input type="range" id="size" min="2" max="120" value="20" />
+      </label>
+      <label class="check">
+        <input type="checkbox" id="pressure" checked /> pressure
+      </label>
+    </div>
+
+    <div class="group">
+      <button id="clear-matte" class="ghost">Clear matte</button>
+      <button id="clear-sketch" class="ghost">Clear sketch</button>
+      <button id="sketch2matte">Sketch → Matte</button>
+    </div>
+
+    <div class="group end">
+      <label>Steps
+        <input type="number" id="steps" min="1" max="100" value="20" />
+      </label>
+      <label class="check">
+        <input type="checkbox" id="composite" checked /> full composite
+      </label>
+      <button id="infer" class="primary">Inference</button>
+    </div>
+  </section>
+
+  <main>
+    <div class="canvas-box">
+      <div class="canvas-label">Input (face + matte + sketch)</div>
+      <canvas id="display" width="512" height="512"></canvas>
+      <div class="layers-toggle">
+        <label class="check"><input type="checkbox" id="show-matte" checked /> matte</label>
+        <label class="check"><input type="checkbox" id="show-sketch" checked /> sketch</label>
+        <label class="check"><input type="checkbox" id="show-face" checked /> face</label>
+      </div>
+    </div>
+
+    <div class="canvas-box">
+      <div class="canvas-label">Result</div>
+      <canvas id="result" width="512" height="512"></canvas>
+      <div class="result-actions">
+        <button id="save-result" class="ghost" disabled>Save PNG</button>
+        <span id="infer-status" class="muted"></span>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <span class="muted">Pointer / Pen / Touch — pressure-sensitive (tablet)</span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

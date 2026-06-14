@@ -71,7 +71,11 @@ def load_config(config_path: str) -> dict:
         cfg = yaml.safe_load(f)
     base_path = cfg.pop("base", None)
     if base_path:
-        base_cfg = load_config(str(Path(config_path).parent / base_path))
+        # base 경로는 cwd(프로젝트 루트) 기준. 단, 없으면 config_path 옆에서 fallback.
+        bp = Path(base_path)
+        if not bp.exists():
+            bp = Path(config_path).parent / base_path
+        base_cfg = load_config(str(bp))
         cfg = deep_merge(base_cfg, cfg)
     return cfg
 
@@ -325,6 +329,8 @@ def main():
                              "matte와 face(GT img) 필요. --hair_color보다 우선.")
     parser.add_argument("--device",        default=None,
                         help="cuda / cpu (기본: cuda if available)")
+    parser.add_argument("--seed",          type=int, default=None,
+                        help="고정 시 매 이미지마다 동일한 noise 사용 (A/B 같은 controlled compare용)")
     args = parser.parse_args()
 
     cfg    = load_config(args.config)
@@ -383,6 +389,10 @@ def main():
         print(f"Stroke 색 교체: RGB{hair_color}")
 
     for sketch_file, matte_file, face_file, stem in tqdm(pairs, desc="Generating"):
+        if args.seed is not None:
+            torch.manual_seed(args.seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(args.seed)
         sketch = load_sketch(sketch_file)
 
         if matte_file and matte_file.exists():
