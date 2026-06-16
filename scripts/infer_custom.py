@@ -249,17 +249,8 @@ def composite_full(
     device: torch.device,
     face_latent: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """hair_latent * m + face_latent * (1-m) → decode → pixel blend → (1,3,512,512) [0,1]."""
-    if face_latent is None:
-        face_latent = vae.encode(face.to(device=device, dtype=torch.bfloat16))
-    matte_latent = F.interpolate(matte.to(device), size=(64, 64), mode="area").to(dtype=torch.bfloat16)
-
-    lat      = hair_latent * matte_latent + face_latent * (1.0 - matte_latent)
-    image_01 = (vae.decode(lat).float().clamp(-1, 1) + 1) / 2
-
-    matte_px = matte.to(device=device, dtype=torch.float32)
-    face_01  = face.to(device=device, dtype=torch.float32)
-    return image_01 * matte_px + face_01 * (1.0 - matte_px)
+    """VAE decode 만 수행. Decoder 직전 latent BLD / Decode 직후 pixel BLD 모두 적용 안 함."""
+    return (vae.decode(hair_latent).float().clamp(-1, 1) + 1) / 2
 
 
 # ---------------------------------------------------------------------------
