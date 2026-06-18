@@ -43,4 +43,10 @@ T3/*.log
 T3/*.Zone.Identifier
 T3/eval
 T3/
-
+experiment_cross_id/
+checkpoints/
+checkpoints
+unbraid_new/
+*.pyc
+__pycache__/
+*.log

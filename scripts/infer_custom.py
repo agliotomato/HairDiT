@@ -34,6 +34,7 @@ Usage:
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -322,6 +323,9 @@ def main():
                         help="cuda / cpu (기본: cuda if available)")
     parser.add_argument("--seed",          type=int, default=None,
                         help="고정 시 매 이미지마다 동일한 noise 사용 (A/B 같은 controlled compare용)")
+    parser.add_argument("--throttle",      type=float, default=0.0,
+                        help="이미지마다 N초 sleep — GPU를 중간중간 쉬게 해 in-run 발열/전력 피크 완화 "
+                             "(WSL에서 전력제한 불가할 때 소프트웨어 스로틀). 예: 1.0")
     args = parser.parse_args()
 
     cfg    = load_config(args.config)
@@ -416,6 +420,10 @@ def main():
             result = decode_hair(vae, hair_latent)
 
         to_pil(result.cpu()).save(output_dir / f"{stem}.png")
+
+        if args.throttle > 0:
+            torch.cuda.synchronize() if torch.cuda.is_available() else None
+            time.sleep(args.throttle)
 
     print(f"\n완료: {output_dir}/")
 
