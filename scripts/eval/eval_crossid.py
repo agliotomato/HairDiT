@@ -56,7 +56,7 @@ REPORT = [
 MODELS = [("mcs1", "Ours"), ("mcs2", "Ours+Gate"),
           ("mcs3", "Sketch-only"), ("mcs4", "Sketch-only+Gate"),
           ("mcs5", "Raw-only"), ("mcs6", "Matte-CNN-only")]
-VERSIONS = ["gt_sketch"]
+VERSIONS = ["gt_sketch", "original_sketch"]
 
 
 def read_summary(path: Path) -> dict[str, dict]:
