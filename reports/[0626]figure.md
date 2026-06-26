@@ -1,6 +1,6 @@
 # [0626] Figure — Color Sketch vs GT Color 비교
 
-`HairDiT/outputs/figure/` 의 결과 이미지로 구성. 각 행은 한 입력(identity), 각 열은 방법별 결과입니다. 방법: **원본 / sketch(입력 스케치) / matte / hair-dit(ours) / hair-dit_sketch_only / SketchHairSalon / VividHairStyler / HairCLIPv2_shscolor**.
+`HairDiT/outputs/figure/` 의 결과 이미지로 구성. 각 행은 한 입력(identity), 각 열은 방법별 결과입니다. 방법: **원본 / sketch(입력 스케치) / matte / hair-dit(ours) / hair-dit(sketch_only) / SketchHairSalon / VividHairStyler / HairCLIPv2_shscolor**.
 
 > matte는 `data/matt`(제공 헤어 마스크). **SketchHairSalon**, **VividHairStyler**(provided matte), **HairCLIPv2_shscolor**(blend 영역으로 사용) 모두 이 matte를 활용합니다. HairCLIPv2_shscolor = sketch(구조)+matte(영역)+SketchHairSalon 결과(색 레퍼런스)로 합성한 HairCLIPv2 강화판입니다.
 
@@ -8,7 +8,7 @@
 
 입력 스케치: 원본 컬러(무지개) 스케치 (`sketch_color`).
 
-| 원본 (input_img) | sketch | matte | hair-dit (ours) | hair-dit_sketch_only | SketchHairSalon | VividHairStyler | HairCLIPv2_shscolor |
+| 원본 (input_img) | sketch | matte | hair-dit (ours) | hair-dit(sketch_only) | SketchHairSalon | VividHairStyler | HairCLIPv2_shscolor |
 |---|---|---|---|---|---|---|---|
 | <img src="../outputs/figure/input_img/CM_1005.png" height="170"> | <img src="../outputs/figure/sketch_color/CM_1005.png" height="170"> | <img src="../outputs/figure/matt/CM_1005.png" height="170"> | <img src="../outputs/figure/color/hair-dit/CM_1005.png" height="170"> | <img src="../outputs/figure/color/hair-dit_sketch_only/CM_1005.png" height="170"> | <img src="../outputs/figure/color/SketchHairSalon/CM_1005.png" height="170"> | <img src="../outputs/figure/color/VividHairStyler/CM_1005.png" height="170"> | <img src="../outputs/figure/color/HairCLIPv2_shscolor/CM_1005.png" height="170"> |
 | <img src="../outputs/figure/input_img/CM_1033.png" height="170"> | <img src="../outputs/figure/sketch_color/CM_1033.png" height="170"> | <img src="../outputs/figure/matt/CM_1033.png" height="170"> | <img src="../outputs/figure/color/hair-dit/CM_1033.png" height="170"> | <img src="../outputs/figure/color/hair-dit_sketch_only/CM_1033.png" height="170"> | <img src="../outputs/figure/color/SketchHairSalon/CM_1033.png" height="170"> | <img src="../outputs/figure/color/VividHairStyler/CM_1033.png" height="170"> | <img src="../outputs/figure/color/HairCLIPv2_shscolor/CM_1033.png" height="170"> |
@@ -29,7 +29,7 @@
 
 입력 스케치: GT 원본(`input_img`)의 머리색으로 리컬러한 스케치 (`sketch_gt`).
 
-| 원본 (input_img) | sketch | matte | hair-dit (ours) | hair-dit_sketch_only | SketchHairSalon | VividHairStyler | HairCLIPv2_shscolor |
+| 원본 (input_img) | sketch | matte | hair-dit (ours) | hair-dit(sketch_only) | SketchHairSalon | VividHairStyler | HairCLIPv2_shscolor |
 |---|---|---|---|---|---|---|---|
 | <img src="../outputs/figure/input_img/CM_1005.png" height="170"> | <img src="../outputs/figure/sketch_gt/CM_1005.png" height="170"> | <img src="../outputs/figure/matt/CM_1005.png" height="170"> | <img src="../outputs/figure/gt/hair-dit/CM_1005.png" height="170"> | <img src="../outputs/figure/gt/hair-dit_sketch_only/CM_1005.png" height="170"> | <img src="../outputs/figure/gt/SketchHairSalon/CM_1005.png" height="170"> | <img src="../outputs/figure/gt/VividHairStyler/CM_1005.png" height="170"> | <img src="../outputs/figure/gt/HairCLIPv2_shscolor/CM_1005.png" height="170"> |
 | <img src="../outputs/figure/input_img/CM_1033.png" height="170"> | <img src="../outputs/figure/sketch_gt/CM_1033.png" height="170"> | <img src="../outputs/figure/matt/CM_1033.png" height="170"> | <img src="../outputs/figure/gt/hair-dit/CM_1033.png" height="170"> | <img src="../outputs/figure/gt/hair-dit_sketch_only/CM_1033.png" height="170"> | <img src="../outputs/figure/gt/SketchHairSalon/CM_1033.png" height="170"> | <img src="../outputs/figure/gt/VividHairStyler/CM_1033.png" height="170"> | <img src="../outputs/figure/gt/HairCLIPv2_shscolor/CM_1033.png" height="170"> |
