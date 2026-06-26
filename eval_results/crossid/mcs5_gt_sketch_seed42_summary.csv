@@ -1,0 +1,11 @@
+metric,axis,paired,unit,braid,braid_ci95,unbraid,unbraid_ci95,macro,macro_ci95,combined573
+Sketch LPIPS ↓,구조,paired(vs sketch),split,0.4754,0.0483,0.6617,0.0110,0.5686,0.0248,N/A
+Sketch ΔE2000 ↓,색상(vs sk),paired(vs sketch),split,N/A,N/A,N/A,N/A,N/A,N/A,N/A
+Edge IoU ↑,구조(보조),paired(vs sketch),split,0.0907,0.0035,0.0500,0.0012,0.0704,0.0018,N/A
+Hair FID ↓,리얼리즘,unpaired,combined,N/A,N/A,N/A,N/A,N/A,N/A,79.5255
+LPIPS (GT) ↓,외형,paired(vs GT),split,0.1552,0.0177,0.2439,0.0042,0.1996,0.0091,N/A
+"ΔE2000 (GT, hair) ↓",색상(vs GT),paired(vs GT),split,2.3666,0.3412,2.0363,0.1073,2.2015,0.1788,N/A
+PSNR (hair) ↑,화질,paired(vs GT),split,14.1764,0.2350,14.0591,0.1230,14.1177,0.1326,N/A
+Boundary FID ↓,경계,unpaired,combined,N/A,N/A,N/A,N/A,N/A,N/A,N/A
+Boundary LPIPS ↓,경계(보조),paired(vs GT),split,N/A,N/A,N/A,N/A,N/A,N/A,N/A
+Full-portrait FID ↓,전역 조화,unpaired,combined,N/A,N/A,N/A,N/A,N/A,N/A,N/A
