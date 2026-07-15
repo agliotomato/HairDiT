@@ -1,0 +1,38 @@
+# configs/joint_phase2.yaml — unbraid+braid 통합 학습 phase2 (40 epoch), PDF-aligned 32ch
+# joint_phase1과 output_dir 외 학습·모델 설정이 동일하다.
+# phase1에 이어서 학습하려면 아래 중 하나로 실행:
+#   python scripts/train.py --config configs/joint_phase2.yaml --resume checkpoints/joint_phase1/epoch_40.pth
+#   (또는 training.resume 에 checkpoints/joint_phase1/epoch_40.pth 지정 — 32ch→32ch resume이라 허용)
+base: configs/base.yaml
+
+model:
+  zero_matte_cond: false
+  zero_matte_feat: false
+  zero_raw_matte: false
+  num_extra_conditioning_channels: 16   # → 32ch condition (16 latent + 16 raw anchor)
+  matte_bias_zero_init: true
+  use_matte_scale: true
+
+training:
+  phase: pretrain
+  dataset: both              # unbraid_{train,test} + braid_{train,test} ConcatDataset (trainer._setup_data 지원)
+  epochs: 40
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-4
+  warmup_steps: 500
+  mode: forward              # sketch→hair만 학습. hair→sketch(inverse)·cycle·decoder 미사용
+  schedule: all
+  gate_alpha: 1.0            # PDF full matte gate (Eq. 9)
+  resume: null               # phase1 이어받기는 위 주석의 --resume 로 지정 (17ch resume 금지)
+
+  loss_weights:
+    flow: 1.0
+    lpips: 0.1
+    lpips_warmup_frac: 0.3   # activate LPIPS after 30% of steps
+    edge: 0.0                # pretrain phase → no edge loss
+
+checkpointing:
+  output_dir: checkpoints/joint_phase2/
+  eval_every: 10
+  save_every: 10

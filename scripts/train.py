@@ -38,7 +38,11 @@ def load_config(config_path: str) -> dict:
         cfg = yaml.safe_load(f)
     base_path = cfg.pop("base", None)
     if base_path:
-        base_cfg = load_config(str(Path(config_path).parent / base_path))
+        # base 경로는 cwd(프로젝트 루트) 기준. 단, 없으면 config_path 옆에서 fallback.
+        bp = Path(base_path)
+        if not bp.exists():
+            bp = Path(config_path).parent / base_path
+        base_cfg = load_config(str(bp))
         cfg = deep_merge(base_cfg, cfg)
     return cfg
 

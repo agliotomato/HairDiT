@@ -2,23 +2,26 @@
 HairControlNet: SD3.5 ControlNet for hair region generation.
 
 Components:
-- SD3ControlNetModel (trainable, initialized from SD3.5-medium transformer)
-- MatteCNN: 1ch matte → 16ch features at latent resolution (512→64)
+- SD3ControlNetModel (trainable, initialized from SD3.5-medium transformer;
+  pos_embed_input takes 32ch via num_extra_conditioning_channels=16)
+- MatteCNN: 1ch matte → 16ch region-aware bias (final conv zero-init, PDF §3.3.1)
+- RawMatteAnchor: 1ch matte → PixelUnshuffle(8)+1x1Conv → 16ch anchor (PDF §3.3.2)
+- matte_scale (λ): learnable residual scale on the MatteCNN bias (PDF Eq. 3)
 - null_encoder_hidden_states: nn.Parameter (1, 333, 4096), learned null text embedding
 - null_pooled_projections:    nn.Parameter (1, 2048), learned null pooled embedding
 
-Forward (zero_matte_cond=False, MCS default):
+Forward (zero_matte_cond=False, PDF-aligned 32ch default):
   inputs: noisy_latent (B,16,64,64), sketch (B,3,512,512), matte (B,1,512,512), sigmas (B,)
-  1. sketch → frozen VAE encode → sketch_latent (B,16,64,64)
-  2. matte → MatteCNN → matte_feat (B,16,64,64)
-  3. matte → area-average downsample → matte_latent (B,1,64,64)
-  4. ctrl_cond = cat([sketch_latent + matte_feat, matte_latent], dim=1)  (B,17,64,64)
-  5. SD3ControlNetModel forward → block_samples
-  6. return block_samples, null_encoder_hs (expanded to B), null_pooled (expanded to B)
+  1. sketch → frozen VAE encode → sketch_latent  z_sketch (B,16,64,64)
+  2. matte → MatteCNN → matte_bias (B,16,64,64);  matte → RawMatteAnchor → raw_anchor (B,16,64,64)
+  3. z_cond   = z_sketch + λ·matte_bias                               (B,16,64,64)
+     ctrl_cond = cat([z_cond, raw_anchor], dim=1)                     (B,32,64,64)  (PDF Eqs. 3, 6)
+  4. SD3ControlNetModel forward → block_samples
+  5. return block_samples, null_encoder_hs (expanded to B), null_pooled (expanded to B)
 
-zero_matte_cond=True: matte_feat and matte_latent are zeroed → ctrl_cond carries sketch only.
-zero_matte_feat=True: only matte_feat is zeroed; matte_latent (raw downsample) is kept.
-zero_raw_matte=True:  only matte_latent (raw downsample, 1ch) is zeroed; MatteCNN matte_feat is kept.
+zero_matte_cond=True: matte_bias and raw_anchor both zeroed → ctrl_cond carries sketch only.
+zero_matte_feat=True: only matte_bias is zeroed; raw_anchor is kept (RawMatte-concat only).
+zero_raw_matte=True:  only raw_anchor is zeroed; MatteCNN matte_bias is kept (MatteCNN-bias only).
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ class MatteCNN(nn.Module):
     Channels:  1  →  16 →  32 →  16
     """
 
-    def __init__(self):
+    def __init__(self, zero_init_last: bool = True):
         super().__init__()
         self.net = nn.Sequential(
             # Block 1: 1 → 16, 512 → 256
@@ -56,6 +59,11 @@ class MatteCNN(nn.Module):
             nn.GroupNorm(4, 16),
             nn.SiLU(),
         )
+        # PDF §3.3.1: final conv zero-init so the matte bias starts from zero.
+        # 마지막 conv 뒤 GroupNorm(beta=0)+SiLU(0)=0 이므로 초기 출력은 전부 0.
+        if zero_init_last:
+            convs = [m for m in self.net.modules() if isinstance(m, nn.Conv2d)]
+            nn.init.zeros_(convs[-1].weight)   # 마지막 conv는 bias=False → weight만
 
     def forward(self, matte: torch.Tensor) -> torch.Tensor:
         """
@@ -65,6 +73,23 @@ class MatteCNN(nn.Module):
             feat: (B, 16, 64, 64)
         """
         return self.net(matte)
+
+
+class RawMatteAnchor(nn.Module):
+    """matte (B,1,512,512) -> PixelUnshuffle(8) (B,64,64,64) -> 1x1 Conv (B,16,64,64).
+
+    Folds each local 8×8 matte block into the channel dimension (preserving local
+    occupancy patterns lost by simple average pooling), then projects 64→16ch.
+    PDF Eqs. (4)-(5).
+    """
+
+    def __init__(self, out_channels: int = 16):
+        super().__init__()
+        self.unshuffle = nn.PixelUnshuffle(8)
+        self.proj = nn.Conv2d(64, out_channels, kernel_size=1, bias=False)
+
+    def forward(self, matte: torch.Tensor) -> torch.Tensor:
+        return self.proj(self.unshuffle(matte))
 
 
 class SketchDecoderHead(nn.Module):
@@ -147,6 +172,9 @@ class HairControlNet(nn.Module):
         zero_matte_cond: bool = False,
         zero_matte_feat: bool = False,
         zero_raw_matte: bool = False,
+        num_extra_conditioning_channels: int = 16,   # 16 → 32ch condition (16 latent + 16 extra)
+        matte_bias_zero_init: bool = True,
+        use_matte_scale: bool = True,
     ):
         super().__init__()
 
@@ -161,17 +189,23 @@ class HairControlNet(nn.Module):
         self.controlnet = SD3ControlNetModel.from_transformer(
             transformer,
             num_layers=num_layers,
+            num_extra_conditioning_channels=num_extra_conditioning_channels,  # 16 → pos_embed_input 32ch
             load_weights_from_transformer=True,
-            # SD3ControlNetModel defaults to extra_conditioning_channels=1,
-            # so pos_embed_input expects 17ch. We provide 17ch ctrl_cond:
-            #   16ch: sketch_latent + matte_feat
-            #    1ch: raw matte_latent (explicit spatial mask)
         )
         # Free transformer memory — it's held separately in Trainer
         del transformer
         torch.cuda.empty_cache()
 
-        self.matte_cnn = MatteCNN()
+        # PDF-aligned 32ch condition:  cat([z_sketch + λ·matte_bias, raw_anchor])
+        #   matte_cnn        → matte_bias (B,16,64,64), zero-init so it starts at 0
+        #   raw_matte_anchor → PixelUnshuffle(8)+1x1Conv → raw_anchor (B,16,64,64)
+        #   matte_scale (λ)  → learnable residual scale on the matte bias
+        self.matte_cnn = MatteCNN(zero_init_last=matte_bias_zero_init)
+        self.raw_matte_anchor = RawMatteAnchor(out_channels=16)
+        if use_matte_scale:
+            self.matte_scale = nn.Parameter(torch.tensor(1.0))
+        else:
+            self.register_buffer("matte_scale", torch.tensor(1.0))
 
         self.sketch_decoder: SketchDecoderHead | None = (
             SketchDecoderHead() if use_sketch_decoder else None
@@ -218,23 +252,23 @@ class HairControlNet(nn.Module):
         sketch_latent = self._vae.encode(sketch.to(dtype=dtype))   # (B, 16, 64, 64)
         sketch_latent = sketch_latent.to(device=device, dtype=dtype)
 
-        # 2. Encode matte through trainable CNN → latent-resolution features
-        matte_feat = self.matte_cnn(matte.to(device=device, dtype=dtype))  # (B, 16, 64, 64)
+        # 2. Matte conditioning (PDF §3.3, 32ch condition):
+        #    matte_bias = MatteCNN(m)       (zero-init → starts at 0)   (B,16,64,64)
+        #    raw_anchor = RawMatteAnchor(m) = PixelUnshuffle(8)+1x1Conv  (B,16,64,64)
+        matte_bias = self.matte_cnn(matte.to(device=device, dtype=dtype))          # (B,16,64,64)
+        raw_anchor = self.raw_matte_anchor(matte.to(device=device, dtype=dtype))   # (B,16,64,64)
 
-        # 3. Combine into control conditioning (17ch for SD3ControlNetModel API)
-        #    16ch: sketch_latent + matte_feat  (structural + matte learned features)
-        #     1ch: raw matte downsampled       (explicit spatial mask)
-        matte_latent = F.interpolate(
-            matte.to(device=device, dtype=dtype), size=(64, 64), mode="area"
-        )  # (B, 1, 64, 64) — area avg: each pixel = mean of 8×8 region
-        if self.zero_matte_cond:
-            matte_feat   = torch.zeros_like(matte_feat)
-            matte_latent = torch.zeros_like(matte_latent)
-        elif self.zero_matte_feat:
-            matte_feat = torch.zeros_like(matte_feat)
-        elif self.zero_raw_matte:
-            matte_latent = torch.zeros_like(matte_latent)
-        ctrl_cond = torch.cat([sketch_latent + matte_feat, matte_latent], dim=1)  # (B, 17, 64, 64)
+        if self.zero_matte_cond:      # sketch-only
+            matte_bias = torch.zeros_like(matte_bias)
+            raw_anchor = torch.zeros_like(raw_anchor)
+        elif self.zero_matte_feat:    # raw-anchor only
+            matte_bias = torch.zeros_like(matte_bias)
+        elif self.zero_raw_matte:     # matte-bias only
+            raw_anchor = torch.zeros_like(raw_anchor)
+
+        # 3. ctrl_cond = cat([z_sketch + λ·matte_bias, raw_anchor]) = 32ch (PDF Eqs. 3, 6)
+        z_cond = sketch_latent + self.matte_scale.to(dtype=dtype) * matte_bias      # (B,16,64,64)
+        ctrl_cond = torch.cat([z_cond, raw_anchor], dim=1)                          # (B,32,64,64)
 
         # 4. Expand null embeddings to batch size
         null_enc_hs = self.null_encoder_hidden_states.expand(B, -1, -1).to(device=device, dtype=dtype)
@@ -280,18 +314,18 @@ class HairControlNet(nn.Module):
         else:
             cond_latent = self._vae.encode(condition_image.to(dtype=dtype)).to(device=device, dtype=dtype)
 
-        matte_feat   = self.matte_cnn(matte.to(device=device, dtype=dtype))
-        matte_latent = F.interpolate(
-            matte.to(device=device, dtype=dtype), size=(64, 64), mode="area"
-        )  # (B, 1, 64, 64) — area avg: each pixel = mean of 8×8 region
+        # 32ch condition — identical assembly to forward() (PDF §3.3), but on cond_latent.
+        matte_bias = self.matte_cnn(matte.to(device=device, dtype=dtype))          # (B,16,64,64)
+        raw_anchor = self.raw_matte_anchor(matte.to(device=device, dtype=dtype))   # (B,16,64,64)
         if self.zero_matte_cond:
-            matte_feat   = torch.zeros_like(matte_feat)
-            matte_latent = torch.zeros_like(matte_latent)
+            matte_bias = torch.zeros_like(matte_bias)
+            raw_anchor = torch.zeros_like(raw_anchor)
         elif self.zero_matte_feat:
-            matte_feat = torch.zeros_like(matte_feat)
+            matte_bias = torch.zeros_like(matte_bias)
         elif self.zero_raw_matte:
-            matte_latent = torch.zeros_like(matte_latent)
-        ctrl_cond = torch.cat([cond_latent + matte_feat, matte_latent], dim=1)  # (B, 17, 64, 64)
+            raw_anchor = torch.zeros_like(raw_anchor)
+        ctrl_cond = torch.cat([cond_latent + self.matte_scale.to(dtype=dtype) * matte_bias,
+                               raw_anchor], dim=1)   # (B,32,64,64)
 
         null_enc_hs = self.null_encoder_hidden_states.expand(B, -1, -1).to(device=device, dtype=dtype)
         null_pooled = self.null_pooled_projections.expand(B, -1).to(device=device, dtype=dtype)
@@ -325,31 +359,48 @@ class HairControlNet(nn.Module):
 # Matte-gated residual helpers
 # ---------------------------------------------------------------------------
 
-def make_matte_tok(matte: torch.Tensor) -> torch.Tensor:
-    """matte (B,1,512,512) → token grid (B,1024,1), SD3 patchify와 동일 순서.
+def make_matte_latent_from_unshuffle(matte: torch.Tensor) -> torch.Tensor:
+    """matte (B,1,512,512) → latent-resolution matte m̃_64 (B,1,64,64) (PDF Eq. 7).
 
-    SD3 patchify: Conv2d(patch=2) → flatten(2).transpose(1,2)
-    512px → latent 64² → patch2 → 32×32 = 1024 tokens
+    ChannelAvg(PixelUnshuffle(m, 8)) = mean over each 8×8 block.
+    F.interpolate(m, 64, mode="area")와 수치적으로 동일.
     """
-    tok = F.interpolate(matte, size=(32, 32), mode="area")
-    return tok.flatten(2).transpose(1, 2)  # (B, 1024, 1)
+    mpu = F.pixel_unshuffle(matte, downscale_factor=8)   # (B,64,64,64)
+    return mpu.mean(dim=1, keepdim=True)                 # (B,1,64,64)
+
+
+def make_matte_tok(matte: torch.Tensor) -> torch.Tensor:
+    """matte (B,1,512,512) → token grid (B,1024,1), SD3 patchify와 동일 순서 (PDF Eq. 8).
+
+    m̃_64 = ChannelAvg(PixelUnshuffle(m,8)); m̃_tok = Flatten(AvgPool2×2(m̃_64)).
+    512px → latent 64² → 2×2 avg-pool → 32×32 = 1024 tokens.
+    기존 area-resize(32) 결과와 수치 동일(max abs diff ~3.6e-7).
+    """
+    m64 = make_matte_latent_from_unshuffle(matte)
+    mtok = F.avg_pool2d(m64, kernel_size=2, stride=2)    # (B,1,32,32)
+    return mtok.flatten(2).transpose(1, 2)               # (B,1024,1)
 
 
 def gate_block_samples(
     block_samples: list[torch.Tensor],
     matte: torch.Tensor,
     schedule: str,
+    gate_alpha: float = 1.0,
     image_tokens: int = 1024,
     num_transformer_blocks: int = 24,
 ) -> list[torch.Tensor]:
-    """schedule에 따라 block_samples의 image token 부분에 soft matte gate 적용.
+    """schedule에 따라 block_samples의 image token 부분에 alpha matte gate 적용 (PDF Eq. 9).
 
+    r̂_k = r_k ⊙ [a·m̃_tok + (1-a)·1],  a = gate_alpha ∈ [0,1].
+      a=0 → gate 없음(원본),  a=1 → full matte gating.
     block_sample[k]는 transformer blocks 2k, 2k+1에 대응 (interval=2).
       back_only  : k=6..11 → transformer block 12..23
       front_only : k=0..5  → transformer block 0..11
       all        : 전체
     text token (seq[1024:])은 게이팅하지 않음.
     """
+    if not 0.0 <= gate_alpha <= 1.0:
+        raise ValueError(f"gate_alpha must be in [0, 1], got {gate_alpha}")
     if schedule == "none":
         return block_samples
 
@@ -368,7 +419,8 @@ def gate_block_samples(
             "back_only":  block_idx >= half,
         }[schedule]
         if apply:
-            img = res[:, :image_tokens, :] * matte_tok  # (B, 1024, 1152)
+            gate = gate_alpha * matte_tok + (1.0 - gate_alpha)   # (B,1024,1)
+            img = res[:, :image_tokens, :] * gate                # (B,1024,D)
             txt = res[:, image_tokens:, :]
             gated.append(torch.cat([img, txt], dim=1))
         else:
