@@ -3,8 +3,10 @@ Flow matching losses for SD3.5 ControlNet hair generation.
 
 L_total = w_flow * L_flow + w_lpips * L_lpips + w_edge * L_edge
 
-L_flow: masked MSE(v_pred, v_target) where v_target = noise - latents
-  - matte region weight=1.0, outside weight=0.0 (BLD: loss=0 outside matte)
+L_flow: masked flow matching loss (paper Eq. 12)
+  - L_flow = ||m̃ ⊙ (v_pred - v_target)||² / (||m̃||₁ + ε), v_target = noise - latents
+  - 분모가 헤어 면적(matte L1)이라 헤어 영역 크기와 무관하게 샘플 기여가 균등
+  - matte 바깥 weight=0.0 (BLD: loss=0 outside matte)
 L_lpips: perceptual loss on decoded x0_pred in matte region
   - x0_pred = x_t - sigma * v_pred  (flow matching x0 recovery)
   - decoded through SD3.5 VAE
@@ -27,15 +29,22 @@ from src.models.vae_wrapper import VAEWrapper
 
 class FlowMatchingLoss(nn.Module):
     """
-    Masked MSE between predicted velocity and target velocity.
+    Masked flow matching loss — paper Eq. 12:
+
+        L_flow = ||m̃ ⊙ (v_pred - v_target)||² / (||m̃||₁ + ε)
+
+    - 분자: matte를 차이에 곱한 뒤 제곱해 전 원소 합산 (soft 경계는 m̃² 가중)
+    - 분모: matte L1 norm(= 헤어 면적) — 전체 텐서 크기(B·C·H·W)가 아니라
+      헤어 영역 크기로 정규화하므로 작은 헤어 샘플도 기여가 깎이지 않는다.
+    - outside_weight > 0 이면 m̃ 대신 [m̃ + w·(1-m̃)] 을 마스크로 사용 (기본 0.0 = 논문).
 
     v_target = noise - latents  (flow matching velocity)
-    Loss weights: matte_region=1.0, outside=0.0 (BLD style)
     """
 
-    def __init__(self, outside_weight: float = 0.0):
+    def __init__(self, outside_weight: float = 0.0, eps: float = 1e-6):
         super().__init__()
         self.outside_weight = outside_weight
+        self.eps = eps
 
     def forward(
         self,
@@ -52,13 +61,11 @@ class FlowMatchingLoss(nn.Module):
         Returns:
             loss: scalar
         """
-        diff_sq = (v_pred - v_target) ** 2  # (B, 16, 64, 64)
-
-        # Weight: matte region=1.0, outside=outside_weight
         weight = matte_latent + self.outside_weight * (1.0 - matte_latent)  # (B, 1, 64, 64)
-        weight = weight.expand_as(diff_sq)
 
-        return (weight * diff_sq).mean()
+        # bf16 대규모 합산 오차 방지를 위해 float32로 계산 (gradient는 그대로 흐름)
+        masked_diff = weight.float() * (v_pred.float() - v_target.float())  # (B, 16, 64, 64)
+        return masked_diff.pow(2).sum() / (weight.float().sum() + self.eps)
 
 
 class PerceptualLoss(nn.Module):
@@ -102,9 +109,16 @@ class SketchEdgeAlignmentLoss(nn.Module):
 
     Penalizes regions where the sketch has strokes but the generated hair
     has no corresponding edges (strand boundaries).
+
+    stroke_threshold is deliberately tiny, not a perceptual "is this a visible
+    stroke" cutoff: the recolor pipeline (StrokeColorSampler) guarantees
+    background is exactly 0 and every real stroke pixel has max-channel >=
+    ~10/255 (dark-stroke floor), so any value above float noise already means
+    "stroke". A higher cutoff like the old 0.1 silently drops floor-rescued
+    dark strokes from edge supervision.
     """
 
-    def __init__(self, stroke_threshold: float = 0.1):
+    def __init__(self, stroke_threshold: float = 1e-3):
         super().__init__()
         self.stroke_threshold = stroke_threshold
 

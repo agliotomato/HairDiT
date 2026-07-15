@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from diffusers import FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel
 from torchvision import transforms
 
-from src.models.controlnet_sd35 import HairControlNet, gate_block_samples
+from src.models.controlnet_sd35 import HairControlNet, gate_block_samples, transformer_forward_full_residual
 from src.models.vae_wrapper import VAEWrapper
 
 
@@ -225,6 +225,9 @@ def run_sampling(
 
     for i, t in enumerate(tqdm(scheduler.timesteps, desc="steps", leave=False)):
         sigmas_1d = scheduler.sigmas[i].to(device=device, dtype=torch.bfloat16).view(1)
+        # 모델에 주는 timestep은 SD3.5 규약(= sigma*1000)인 scheduler.timesteps 값 t.
+        # sigma는 BLD 노이징에만 사용한다.
+        timesteps_1d = t.to(device=device).float().view(1)
 
         # BLD(full): matte 바깥을 face의 noised latent로 블렌딩.
         #   bld_soft_steps — 순수 배경(mask==0)은 매 스텝 계속, soft 경계(0<mask<1)는
@@ -240,19 +243,20 @@ def run_sampling(
             noisy_latent=latents,
             sketch=sketch_bf,
             matte=matte_bf,
-            sigmas=sigmas_1d,
+            timesteps=timesteps_1d,
         )
         block_samples = [s.to(dtype=torch.bfloat16) for s in block_samples]
 
         if schedule != "none":
             block_samples = gate_block_samples(block_samples, matte_bf, schedule, gate_alpha=gate_alpha)
 
-        v_pred = transformer(
+        v_pred = transformer_forward_full_residual(
+            transformer,
+            block_samples,
             hidden_states=latents,
             encoder_hidden_states=null_enc_hs.to(dtype=torch.bfloat16),
             pooled_projections=null_pooled.to(dtype=torch.bfloat16),
-            timestep=sigmas_1d,
-            block_controlnet_hidden_states=block_samples,
+            timestep=timesteps_1d,
             return_dict=False,
         )[0]
 
