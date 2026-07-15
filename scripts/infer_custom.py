@@ -48,7 +48,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from diffusers import FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel
 from torchvision import transforms
 
-from src.data.utils import soft_composite
 from src.models.controlnet_sd35 import HairControlNet, gate_block_samples
 from src.models.vae_wrapper import VAEWrapper
 
@@ -128,41 +127,57 @@ def recolor_sketch_from_gt(
     gt_img: torch.Tensor,
     matte: torch.Tensor,
     min_pixels: int = 10,
-    quantize_bits: int = 5,
+    quantize_bits: int | None = None,
 ) -> torch.Tensor:
-    """GT 헤어색으로 stroke를 칠한다 (SketchHairSalon 방식, 학습 StrokeColorSampler와 동일).
+    """GT 헤어색으로 stroke를 칠한다 (flat-color raw uint8 정책, deterministic mean only).
 
-    각 stroke 레이블 영역에 대해 GT target(img×matte)의 해당 위치 머리 픽셀의
-    **평균색**을 계산해 그 stroke 전체를 칠한다. 결정론적(deterministic)이라
-    같은 (sketch, gt) 입력이면 항상 동일한 recolored sketch를 만든다.
+    각 exact RGB stroke group에 대해 matte 내부 GT 이미지 평균색을 계산해
+    matte 내부만 칠하고, matte 바깥은 검정으로 지운다. valid 픽셀이
+    min_pixels 미만인 group은 전체를 검정으로 제거한다.
 
     Args:
         sketch: (1,3,512,512) [0,1]
         gt_img: (1,3,512,512) [0,1] — GT 원본 이미지 (test set은 face와 동일)
         matte:  (1,1,512,512) [0,1]
     """
-    s = sketch.squeeze(0)                    # (3,H,W)
-    target = soft_composite(gt_img.squeeze(0), matte.squeeze(0))  # (3,H,W) = img*matte
+    _ = quantize_bits  # Backward-compatible argument; exact RGB grouping ignores quantization.
+    s = sketch.squeeze(0)                          # (3,H,W)
+    sketch_u8 = (s * 255).round().to(torch.uint8)
+    img_u8 = (gt_img.squeeze(0) * 255).round().to(torch.uint8)
+    matte_u8 = (matte.squeeze(0) * 255).round().to(torch.uint8)
 
-    shift = 8 - quantize_bits
-    sketch_u8 = (s * 255).byte()
-    sketch_q = (sketch_u8 >> shift) << shift  # 양자화로 stroke 레이블 검출
-
-    flat_q = sketch_q.view(3, -1).T
-    unique_colors = torch.unique(flat_q, dim=0)
-
+    flat = sketch_u8.view(3, -1).T
+    unique_colors = torch.unique(flat, dim=0)
     out = s.clone()
+    matte_mask = matte_u8[0] > 0
+    floor_color = torch.tensor([7.0, 7.0, 10.0], dtype=torch.float32, device=s.device) / 255.0
+    floor_threshold = floor_color.max().item()
+
     for color in unique_colors:
         r, g, b = color.tolist()
-        if r == 0 and g == 0 and b == 0:     # 검은 배경 stroke 제외
+        if r == 0 and g == 0 and b == 0:
             continue
-        mask = (sketch_q[0] == r) & (sketch_q[1] == g) & (sketch_q[2] == b)
-        hair_pixels = target[:, mask]                 # (3,N)
-        valid = hair_pixels.sum(dim=0) > 0.05
-        if valid.sum() < min_pixels:                  # GT 머리 픽셀 부족 → 원색 유지
+
+        group_mask = (
+            (sketch_u8[0] == r) &
+            (sketch_u8[1] == g) &
+            (sketch_u8[2] == b)
+        )
+        valid_mask = group_mask & matte_mask
+        outside_mask = group_mask & (~matte_mask)
+
+        if valid_mask.sum().item() < min_pixels:
+            out[:, group_mask] = 0.0
             continue
-        mean_color = hair_pixels[:, valid].float().mean(dim=1)  # (3,)
-        out[:, mask] = mean_color.unsqueeze(1)
+
+        hair_pixels = img_u8[:, valid_mask].float() / 255.0
+        mean_color = hair_pixels.mean(dim=1)
+        if mean_color.max().item() < floor_threshold:
+            mean_color = floor_color.to(mean_color)
+
+        out[:, valid_mask] = mean_color.unsqueeze(1)
+        out[:, outside_mask] = 0.0
+
     return out.unsqueeze(0)
 
 
@@ -180,12 +195,17 @@ def to_pil(t: torch.Tensor) -> Image.Image:
 def run_sampling(
     controlnet, transformer, scheduler, schedule,
     sketch, matte, num_steps, device,
-    vae=None, face=None,
+    vae=None, face=None, bld_mode="full", bld_soft_steps=None,
+    gate_alpha: float = 1.0,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Euler sampling → (hair_latent, face_latent | None).
 
-    BLD: face가 있으면 매 스텝마다 matte 바깥을 face noised latent로 블렌딩.
-    face_latent는 BLD에서 인코딩한 샘플이며 composite_full에서 재사용된다.
+    bld_mode (face 있을 때만 의미):
+      full  — 매 스텝 matte 바깥을 face noised latent로 블렌딩 (최종 하드 pin 없음).
+      final — 매 스텝 블렌딩 없이, 마지막 decode 직전 단 한 번만 latent에서 원본
+              img(face)로 matte 바깥을 합성 (디코더 직전 합성).
+      off   — 배경 블렌딩/합성 전부 없음 (face 무시, 생성 latent 그대로).
+    face_latent(x0_bg)는 인코딩한 배경 latent이며 composite_full에서 재사용된다.
     """
     scheduler.set_timesteps(num_steps, device=device)
 
@@ -195,19 +215,25 @@ def run_sampling(
     sketch_bf = sketch.to(device=device, dtype=torch.bfloat16)
     matte_bf  = matte.to(device=device, dtype=torch.bfloat16)
 
-    # BLD 사전 준비
-    bld = face is not None and vae is not None
-    if bld:
+    # 배경 합성(BLD) 사전 준비. do_bg=최종 합성 여부, per_step=매 스텝 블렌딩 여부.
+    do_bg    = face is not None and vae is not None and bld_mode != "off"
+    per_step = do_bg and bld_mode == "full"
+    if do_bg:
         x0_bg    = vae.encode(face.to(device=device, dtype=torch.bfloat16))  # (1,16,64,64)
         mask_lat = F.interpolate(matte_bf, size=(64, 64), mode="area")       # (1,1,64,64)
 
     for i, t in enumerate(tqdm(scheduler.timesteps, desc="steps", leave=False)):
         sigmas_1d = scheduler.sigmas[i].to(device=device, dtype=torch.bfloat16).view(1)
 
-        # BLD: matte 바깥을 face의 noised latent로 고정
-        if bld:
+        # BLD(full): matte 바깥을 face의 noised latent로 블렌딩.
+        #   bld_soft_steps — 순수 배경(mask==0)은 매 스텝 계속, soft 경계(0<mask<1)는
+        #                    앞 N스텝만 블렌딩(이후 경계는 자유 생성).
+        if per_step:
             noised_bg = (1.0 - sigmas_1d) * x0_bg + sigmas_1d * noise
-            latents   = mask_lat * latents + (1.0 - mask_lat) * noised_bg
+            m = mask_lat
+            if bld_soft_steps is not None and i >= bld_soft_steps:
+                m = (mask_lat > 1e-4).to(mask_lat.dtype)   # 경계는 keep(1), 순수배경만 복원
+            latents = m * latents + (1.0 - m) * noised_bg
 
         block_samples, null_enc_hs, null_pooled = controlnet(
             noisy_latent=latents,
@@ -218,7 +244,7 @@ def run_sampling(
         block_samples = [s.to(dtype=torch.bfloat16) for s in block_samples]
 
         if schedule != "none":
-            block_samples = gate_block_samples(block_samples, matte_bf, schedule)
+            block_samples = gate_block_samples(block_samples, matte_bf, schedule, gate_alpha=gate_alpha)
 
         v_pred = transformer(
             hidden_states=latents,
@@ -231,7 +257,12 @@ def run_sampling(
 
         latents = scheduler.step(v_pred, t, latents, return_dict=False)[0]
 
-    return latents, (x0_bg if bld else None)
+    # final 모드에서만: 디코더 직전 단 한 번 matte 바깥을 노이즈 없는 source latent
+    # x0_bg로 합성. full 모드는 매스텝 블렌딩만 하고 이 하드 고정은 하지 않는다.
+    if do_bg and bld_mode == "final":
+        latents = mask_lat * latents + (1.0 - mask_lat) * x0_bg
+
+    return latents, (x0_bg if do_bg else None)
 
 
 @torch.no_grad()
@@ -319,6 +350,12 @@ def main():
     parser.add_argument("--recolor_from_gt", action="store_true",
                         help="GT 이미지(=matte 영역 평균색)로 stroke 재착색 (SHS 방식). "
                              "matte와 face(GT img) 필요. --hair_color보다 우선.")
+    parser.add_argument("--bld_mode",      default="full", choices=["full", "final", "off"],
+                        help="배경 합성 방식 (face 있을 때만). full=매스텝 블렌딩만, "
+                             "final=디코더 직전 1회만 원본 img 합성, off=합성 안 함")
+    parser.add_argument("--bld_soft_steps", type=int, default=None,
+                        help="순수 배경(mask==0)은 매 스텝, soft 경계(0<mask<1)만 앞 N 스텝만 "
+                             "블렌딩 (이후 경계는 자유 생성).")
     parser.add_argument("--device",        default=None,
                         help="cuda / cpu (기본: cuda if available)")
     parser.add_argument("--seed",          type=int, default=None,
@@ -335,6 +372,7 @@ def main():
     model_id         = cfg["model"]["model_id"]
     local_files_only = cfg.get("local_files_only", False)
     schedule         = cfg["training"].get("schedule", "none")
+    gate_alpha       = cfg["training"].get("gate_alpha", 1.0)   # PDF alpha gate (Eq. 9)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -359,6 +397,9 @@ def main():
         zero_matte_cond=cfg["model"].get("zero_matte_cond", False),
         zero_matte_feat=cfg["model"].get("zero_matte_feat", False),
         zero_raw_matte=cfg["model"].get("zero_raw_matte", False),
+        num_extra_conditioning_channels=cfg["model"].get("num_extra_conditioning_channels", 16),
+        matte_bias_zero_init=cfg["model"].get("matte_bias_zero_init", True),
+        use_matte_scale=cfg["model"].get("use_matte_scale", True),
     )
     ckpt_path = Path(args.checkpoint)
     infer_path = ckpt_path.with_name(ckpt_path.stem + "_infer.pth")
@@ -409,7 +450,9 @@ def main():
         hair_latent, face_latent_bld = run_sampling(
             controlnet, transformer, scheduler, schedule,
             sketch, matte, args.num_steps, device,
-            vae=vae, face=face,
+            vae=vae, face=face, bld_mode=args.bld_mode,
+            bld_soft_steps=args.bld_soft_steps,
+            gate_alpha=gate_alpha,
         )
 
         if face is not None:

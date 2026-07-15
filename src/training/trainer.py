@@ -85,15 +85,24 @@ class Trainer:
         # Inverse task self-distillation
         self.inverse_mode = config["training"].get("mode", "forward") == "inverse"
         self.schedule     = config["training"].get("schedule", "none")
+        self.gate_alpha   = config["training"].get("gate_alpha", 1.0)   # PDF alpha gate (Eq. 9)
         self.w_cycle      = config["training"]["loss_weights"].get("cycle", 0.0)
         self.cycle_start  = config["training"].get("cycle_start", 9999)
         self.w_sketch_dec = config["training"]["loss_weights"].get("sketch_decoder", 0.0)
         self.forward_controlnet: Optional[HairControlNet] = None
 
+        # wandb는 이 env(protobuf 7)와 호환되지 않을 수 있으므로 import 가능할 때만 사용
+        self._trackers = ["tensorboard"]
+        try:
+            import wandb  # noqa: F401
+            self._trackers.append("wandb")
+        except Exception as e:  # pragma: no cover - 환경 의존
+            print(f"[trainer] wandb 비활성화 (import 실패: {e}). tensorboard만 사용.")
+
         self.accelerator = Accelerator(
             mixed_precision=config["training"].get("mixed_precision", "bf16"),
             gradient_accumulation_steps=config["training"].get("gradient_accumulation_steps", 2),
-            log_with=["tensorboard", "wandb"],
+            log_with=self._trackers,
             project_dir=config["checkpointing"]["output_dir"],
         )
 
@@ -185,6 +194,9 @@ class Trainer:
             zero_matte_cond=cfg["model"].get("zero_matte_cond", False),
             zero_matte_feat=cfg["model"].get("zero_matte_feat", False),
             zero_raw_matte=cfg["model"].get("zero_raw_matte", False),
+            num_extra_conditioning_channels=cfg["model"].get("num_extra_conditioning_channels", 16),
+            matte_bias_zero_init=cfg["model"].get("matte_bias_zero_init", True),
+            use_matte_scale=cfg["model"].get("use_matte_scale", True),
         )
 
         # Gradient checkpointing: saves ~40% activation memory at ~20% compute cost
@@ -450,7 +462,7 @@ class Trainer:
             )
             block_samples = [s.to(dtype=torch.bfloat16) for s in block_samples]
             if self.schedule != "none":
-                block_samples = gate_block_samples(block_samples, matte, self.schedule)
+                block_samples = gate_block_samples(block_samples, matte, self.schedule, gate_alpha=self.gate_alpha)
             null_enc_hs   = null_enc_hs.to(dtype=torch.bfloat16)
             null_pooled   = null_pooled.to(dtype=torch.bfloat16)
 
@@ -581,7 +593,7 @@ class Trainer:
             )
             block_samples = [s.to(dtype=torch.bfloat16) for s in block_samples]
             if self.schedule != "none":
-                block_samples = gate_block_samples(block_samples, matte, self.schedule)
+                block_samples = gate_block_samples(block_samples, matte, self.schedule, gate_alpha=self.gate_alpha)
             null_enc_hs   = null_enc_hs.to(dtype=torch.bfloat16)
             null_pooled   = null_pooled.to(dtype=torch.bfloat16)
 

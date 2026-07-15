@@ -1,0 +1,37 @@
+# configs/joint_phase1.yaml — unbraid+braid 통합 학습 phase1 (40 epoch), PDF-aligned 32ch
+# joint_phase1/phase2는 output_dir 외 학습·모델 설정이 동일하다.
+# phase는 pretrain: edge loss는 phase==finetune에서만 켜지므로(losses.py) edge:0 + LPIPS warmup + 강한 aug.
+# 32ch 전용이라 17ch checkpoint resume 금지.
+base: configs/base.yaml
+
+model:
+  zero_matte_cond: false
+  zero_matte_feat: false
+  zero_raw_matte: false
+  num_extra_conditioning_channels: 16   # → 32ch condition (16 latent + 16 raw anchor)
+  matte_bias_zero_init: true
+  use_matte_scale: true
+
+training:
+  phase: pretrain
+  dataset: both              # unbraid_{train,test} + braid_{train,test} ConcatDataset (trainer._setup_data 지원)
+  epochs: 40
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  learning_rate: 1.0e-4
+  warmup_steps: 500
+  mode: forward              # sketch→hair만 학습. hair→sketch(inverse)·cycle·decoder 미사용
+  schedule: all
+  gate_alpha: 1.0            # PDF full matte gate (Eq. 9)
+  resume: null               # 17ch checkpoint resume 금지
+
+  loss_weights:
+    flow: 1.0
+    lpips: 0.1
+    lpips_warmup_frac: 0.3   # activate LPIPS after 30% of steps
+    edge: 0.0                # pretrain phase → no edge loss
+
+checkpointing:
+  output_dir: checkpoints/joint_phase1/
+  eval_every: 10
+  save_every: 10

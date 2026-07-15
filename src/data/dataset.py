@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Optional
 
+import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
@@ -51,6 +52,8 @@ class HairRegionDataset(Dataset):
     ):
         if split not in self.VALID_SPLITS:
             raise ValueError(f"split must be one of {self.VALID_SPLITS}, got '{split}'")
+        if image_size != 512:
+            raise ValueError(f"HairRegionDataset only supports image_size=512 for raw uint8 sketch recolor, got {image_size}")
 
         style, subset = split.rsplit("_", 1)
         root = Path(dataset_root) if dataset_root else DATASET_ROOT
@@ -81,12 +84,26 @@ class HairRegionDataset(Dataset):
     def __len__(self) -> int:
         return len(self.stems)
 
+    @staticmethod
+    def _pil_to_u8_tensor(image: Image.Image, *, gray: bool = False) -> torch.Tensor:
+        """PIL image -> CHW uint8 tensor without normalization."""
+        arr = np.asarray(image, dtype=np.uint8)
+        if gray:
+            arr = arr[None, ...]          # (1, H, W)
+        else:
+            arr = arr.transpose(2, 0, 1)  # (3, H, W)
+        return torch.from_numpy(arr.copy())
+
     def __getitem__(self, idx: int) -> dict:
         stem = self.stems[idx]
 
         img    = Image.open(self.img_dir    / f"{stem}.png").convert("RGB")
         sketch = Image.open(self.sketch_dir / f"{stem}.png").convert("RGB")
         matte  = Image.open(self.matte_dir  / f"{stem}.png").convert("L")   # grayscale
+
+        img_u8    = self._pil_to_u8_tensor(img)
+        sketch_u8 = self._pil_to_u8_tensor(sketch)
+        matte_u8  = self._pil_to_u8_tensor(matte, gray=True)
 
         img_t    = self._to_tensor_rgb(img)     # (3, H, W)
         sketch_t = self._to_tensor_rgb(sketch)  # (3, H, W)
@@ -100,6 +117,9 @@ class HairRegionDataset(Dataset):
             "matte":    matte_t,
             "target":   target_t,
             "img":      img_t,      # kept for composite.py (Step 2)
+            "sketch_u8": sketch_u8,
+            "img_u8":    img_u8,
+            "matte_u8":  matte_u8,
             "filename": stem,
         }
 
