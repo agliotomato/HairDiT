@@ -173,7 +173,8 @@ def recolor_sketch_from_gt(
         hair_pixels = img_u8[:, valid_mask].float() / 255.0
         mean_color = hair_pixels.mean(dim=1)
         if mean_color.max().item() < floor_threshold:
-            mean_color = floor_color.to(mean_color)
+            # train(augmentation)과 동일: 통째 교체가 아니라 채널별 상향 → 어느 채널도 어두워지지 않음
+            mean_color = torch.maximum(mean_color, floor_color.to(mean_color))
 
         out[:, valid_mask] = mean_color.unsqueeze(1)
         out[:, outside_mask] = 0.0
