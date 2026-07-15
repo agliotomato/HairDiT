@@ -11,7 +11,7 @@ Components:
 - null_pooled_projections:    nn.Parameter (1, 2048), learned null pooled embedding
 
 Forward (zero_matte_cond=False, PDF-aligned 32ch default):
-  inputs: noisy_latent (B,16,64,64), sketch (B,3,512,512), matte (B,1,512,512), sigmas (B,)
+  inputs: noisy_latent (B,16,64,64), sketch (B,3,512,512), matte (B,1,512,512), timesteps (B,)  [= sigma*1000]
   1. sketch → frozen VAE encode → sketch_latent  z_sketch (B,16,64,64)
   2. matte → MatteCNN → matte_bias (B,16,64,64);  matte → RawMatteAnchor → raw_anchor (B,16,64,64)
   3. z_cond   = z_sketch + λ·matte_bias                               (B,16,64,64)
@@ -230,14 +230,15 @@ class HairControlNet(nn.Module):
         noisy_latent: torch.Tensor,
         sketch: torch.Tensor,
         matte: torch.Tensor,
-        sigmas: torch.Tensor,
+        timesteps: torch.Tensor,
     ) -> tuple[list[torch.Tensor], torch.Tensor, torch.Tensor]:
         """
         Args:
             noisy_latent: (B, 16, 64, 64) noisy target latent
             sketch:       (B, 3, 512, 512) colored sketch in [0, 1]
             matte:        (B, 1, 512, 512) hair matte in [0, 1]
-            sigmas:       (B,) flow matching sigma values
+            timesteps:    (B,) diffusion timesteps = sigma * num_train_timesteps
+                          (0~1000 스케일 — SD3.5 사전학습 규약. raw sigma 금지)
 
         Returns:
             block_samples:      list of ControlNet residuals
@@ -274,8 +275,9 @@ class HairControlNet(nn.Module):
         null_enc_hs = self.null_encoder_hidden_states.expand(B, -1, -1).to(device=device, dtype=dtype)
         null_pooled = self.null_pooled_projections.expand(B, -1).to(device=device, dtype=dtype)
 
-        # 5. Sigmas → timestep format expected by SD3 (1D, float)
-        timestep = sigmas.to(device=device, dtype=dtype)
+        # 5. Timestep: 0~1000 스케일 값을 float32 그대로 전달
+        #    (sinusoidal 임베딩은 내부에서 float32로 계산 — bf16 다운캐스트 불필요)
+        timestep = timesteps.to(device=device)
 
         # 6. ControlNet forward
         block_samples = self.controlnet(
@@ -379,6 +381,39 @@ def make_matte_tok(matte: torch.Tensor) -> torch.Tensor:
     m64 = make_matte_latent_from_unshuffle(matte)
     mtok = F.avg_pool2d(m64, kernel_size=2, stride=2)    # (B,1,32,32)
     return mtok.flatten(2).transpose(1, 2)               # (B,1024,1)
+
+
+def transformer_forward_full_residual(
+    transformer: SD3Transformer2DModel,
+    block_samples: list[torch.Tensor],
+    **kwargs,
+):
+    """transformer(..., block_controlnet_hidden_states=block_samples) that also reaches
+    the last DiT block (index 23 of 24), which diffusers' own forward skips.
+
+    diffusers' SD3Transformer2DModel.forward() injects residuals with:
+        if block_controlnet_hidden_states is not None and block.context_pre_only is False:
+            hidden_states = hidden_states + block_controlnet_hidden_states[int(index_block / interval)]
+    `context_pre_only` is True only for the last transformer block, so that block never
+    gets a residual added — even though the interval mapping (24 blocks / 12 ControlNet
+    outputs = interval 2) assigns block_samples[-1] to both DiT blocks 22 and 23. This
+    contradicts PDF §3.2 ("covering all 24 blocks"). We restore the missing injection
+    with a forward hook on the last block instead of reimplementing the whole forward pass.
+    """
+    num_blocks = len(transformer.transformer_blocks)
+    interval = num_blocks / len(block_samples)
+    last_residual = block_samples[int((num_blocks - 1) / interval)]
+
+    def _add_residual_hook(module, inputs, output):
+        encoder_hidden_states, hidden_states = output
+        hidden_states = hidden_states + last_residual.to(dtype=hidden_states.dtype, device=hidden_states.device)
+        return encoder_hidden_states, hidden_states
+
+    handle = transformer.transformer_blocks[-1].register_forward_hook(_add_residual_hook)
+    try:
+        return transformer(block_controlnet_hidden_states=block_samples, **kwargs)
+    finally:
+        handle.remove()
 
 
 def gate_block_samples(

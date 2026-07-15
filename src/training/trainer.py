@@ -22,8 +22,9 @@ Training step:
   1. target → VAE encode → latents (16ch, 64x64)
   2. Sample sigma from logit-normal distribution
   3. noisy_latents = (1-sigma)*latents + sigma*noise
-  4. HairControlNet(noisy_latents, sketch, matte, sigmas) → block_samples, null_hs, null_pooled
-  5. transformer(noisy_latents, null_hs, null_pooled, sigmas, block_samples) → v_pred
+  4. HairControlNet(noisy_latents, sketch, matte, timesteps) → block_samples, null_hs, null_pooled
+  5. transformer(noisy_latents, null_hs, null_pooled, timesteps, block_samples) → v_pred
+     (timesteps = sigma * 1000 — SD3.5 사전학습 규약. sigma 원값은 노이징/x0 복원에만 사용)
   6. v_target = noise - latents
   7. loss = flow_loss + lpips + edge
 """
@@ -47,7 +48,7 @@ from tqdm import tqdm
 from src.data.augmentation import build_augmentation_pipeline
 from src.data.dataset import HairRegionDataset
 from src.data.utils import resize_matte_to_latent
-from src.models.controlnet_sd35 import HairControlNet, gate_block_samples
+from src.models.controlnet_sd35 import HairControlNet, gate_block_samples, transformer_forward_full_residual
 from src.models.vae_wrapper import VAEWrapper
 from src.training.ema import EMAModel
 from src.training.losses import HairLoss
@@ -449,7 +450,10 @@ class Trainer:
 
             # Cast inputs to bfloat16 for model forward passes
             noisy_latents = noisy_latents.to(dtype=torch.bfloat16)
-            sigmas_1d = sigmas.view(B).to(dtype=torch.bfloat16)  # (B,) transformer expects bf16
+            # SD3.5 사전학습 규약: 모델에 주는 timestep = sigma * num_train_timesteps (0~1000).
+            # raw sigma(0~1)를 넘기면 frozen DiT가 모든 노이즈 레벨을 t≈0으로 인식한다.
+            # sigma 원값은 노이징(위)과 x0 복원(loss_fn)에만 사용.
+            timesteps_1d = sigmas.view(B).float() * self.scheduler.config.num_train_timesteps
 
             # 5. ControlNet forward → block_samples + null conditioning
             #    HairControlNet VAE-encodes cond_image as its conditioning signal.
@@ -458,7 +462,7 @@ class Trainer:
                 noisy_latent=noisy_latents,
                 sketch=cond_image,
                 matte=matte,
-                sigmas=sigmas_1d,
+                timesteps=timesteps_1d,
             )
             block_samples = [s.to(dtype=torch.bfloat16) for s in block_samples]
             if self.schedule != "none":
@@ -471,12 +475,13 @@ class Trainer:
             # Transformer parameters are frozen via requires_grad_(False),
             # but the computation graph must be maintained so that gradients
             # flow back through block_controlnet_hidden_states → HairControlNet.
-            v_pred = self.transformer(
+            v_pred = transformer_forward_full_residual(
+                self.transformer,
+                block_samples,
                 hidden_states=noisy_latents,
                 encoder_hidden_states=null_enc_hs,
                 pooled_projections=null_pooled,
-                timestep=sigmas_1d,
-                block_controlnet_hidden_states=block_samples,
+                timestep=timesteps_1d,
                 return_dict=False,
             )[0]   # (B, 16, 64, 64)
 
@@ -583,13 +588,14 @@ class Trainer:
             matte_latent = resize_matte_to_latent(matte)
 
             noisy_latents = noisy_latents.to(dtype=torch.bfloat16)
-            sigmas_1d = sigmas.view(B).to(dtype=torch.bfloat16)
+            # SD3.5 규약: timestep = sigma * num_train_timesteps (train step과 동일)
+            timesteps_1d = sigmas.view(B).float() * self.scheduler.config.num_train_timesteps
 
             block_samples, null_enc_hs, null_pooled = self.controlnet(
                 noisy_latent=noisy_latents,
                 sketch=sketch,
                 matte=matte,
-                sigmas=sigmas_1d,
+                timesteps=timesteps_1d,
             )
             block_samples = [s.to(dtype=torch.bfloat16) for s in block_samples]
             if self.schedule != "none":
@@ -597,12 +603,13 @@ class Trainer:
             null_enc_hs   = null_enc_hs.to(dtype=torch.bfloat16)
             null_pooled   = null_pooled.to(dtype=torch.bfloat16)
 
-            v_pred = self.transformer(
+            v_pred = transformer_forward_full_residual(
+                self.transformer,
+                block_samples,
                 hidden_states=noisy_latents,
                 encoder_hidden_states=null_enc_hs,
                 pooled_projections=null_pooled,
-                timestep=sigmas_1d,
-                block_controlnet_hidden_states=block_samples,
+                timestep=timesteps_1d,
                 return_dict=False,
             )[0]
 
