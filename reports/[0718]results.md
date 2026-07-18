@@ -9,11 +9,8 @@
 |------|------|
 | 데이터 | 6,000장 (braid 3,000 + unbraid 3,000) |
 | 학습 | phase1 30 epoch → phase2 20 epoch |
-| seed | 42 고정 |
 | 조건 비교 | **GT sketch** vs **Colorful sketch** 각각 추론 |
 | 추론 시점 | phase1: e10 · e30 / phase2: e5 · e10 · e15 · e20 |
-| 소스 이미지 | `data/paper`, `data/unbraid_new` 의 img · sketch(_gt) |
-| 결과 이미지 | `outputs/results/joint_phase*_epoch*/` |
 
 > 표 열: `img` (원본) · `sketch` (조건 입력) · `P1·eN` (phase1) · `P2·eN` (phase2)
 
