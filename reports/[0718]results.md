@@ -15,9 +15,7 @@
 | 소스 이미지 | `data/paper`, `data/unbraid_new` 의 img · sketch(_gt) |
 | 결과 이미지 | `outputs/results/joint_phase*_epoch*/` |
 
-> 표 열: `img` (원본) · `sketch` (조건 입력) · `P1·eN` (phase1) · `P2·eN` (phase2) · `이전학습`. 모든 셀 동일 폭(130px).
-> `이전학습` = 이전 학습 결과 (`outputs/test8` 우선, 없으면 `outputs/figure/hair-dit_mcs2/{gt,color}`, 둘 다 없으면 `—`).
-> `—` 는 해당 조합의 결과 이미지가 없음(예: phase1 e10에는 unbraid_new 세트 미포함).
+> 표 열: `img` (원본) · `sketch` (조건 입력) · `P1·eN` (phase1) · `P2·eN` (phase2)
 
 ## 결과
 
