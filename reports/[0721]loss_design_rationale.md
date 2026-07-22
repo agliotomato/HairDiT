@@ -1,9 +1,8 @@
 # [0721] Loss 설계 근거 정리 및 커리큘럼 러닝 방식 선택
 
 ## loss 설계
-> 목적: HairDiT의 현재 loss 구성을 명시하고, **어떤 논문을 근거로 이렇게 구성했는지**, 그 논문들은 loss를 **어떤 방식으로 사용했는지**, 그리고 **우리 loss와 무엇이 다른지**를 정리.
+> 목적: HairDiT의 현재 loss 구성을 명시하고, **어떤 논문을 근거로 이렇게 구성했는지**, 그 논문들은 loss를 **어떤 방식으로 사용했는지**, 그리고 **우리 loss와 무엇이 다른지**를 정리.  
 > 주 근거 논문: **PixelGen** (flow 백본 + perceptual 지연 투입), **OSDFace** (Sobel 기반 edge 감독).
-> 관련 파일: `configs/joint_phase1.yaml`, `configs/joint_phase2.yaml`, `configs/phase2_braid.yaml`, `src/training/losses.py`
 
 ---
 
@@ -25,15 +24,15 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 
 - **`L_flow`** — flow matching velocity 예측 L2 loss. 생성의 주 목적함수.
 - **`L_LPIPS`** — perceptual loss. perceptual 총칭 중 **LPIPS**(학습된 채널 가중치로 보정된 지각 거리)를 구체적으로 채택. Phase 1에서는 학습 진행도 30% 이후 활성(`lpips_warmup_frac=0.3`), Phase 2에서는 즉시 활성.
-- **`L_edge`** — `SketchEdgeAlignmentLoss` (`src/training/losses.py`). 예측 이미지의 Sobel gradient 강도를 구한 뒤, **matte 내부에서 sketch stroke가 있는데 예측 edge가 약한 영역**을 penalize → 예측 머리카락 edge를 **입력 sketch stroke에 정렬**. Phase 2(braid)에서만 w_edge=0.05.
+- **`L_edge`** — 예측 이미지의 Sobel gradient 강도를 구한 뒤, **matte 내부에서 sketch stroke가 있는데 예측 edge가 약한 영역**을 penalize → 예측 머리카락 edge를 **입력 sketch stroke에 정렬**. Phase 2(braid)에서만 w_edge=0.05.
 
 ---
 
-### 2. 근거 논문과 사용 방식 (why & how)
+### 2. 근거 논문과 사용 방식
 
-#### 2.1 PixelGen — "flow 백본 + perceptual, 단 지연 투입"
+#### 2.1 PixelGen — "flow 백본 + perceptual, 지연 투입"
 
-**그 논문에서 loss를 쓴 방식(how):**
+**논문에서 loss를 쓴 방식:**
 - 예측 이미지를 velocity로 변환해 **flow-matching 목적함수를 주 loss로 유지**하고, 그 위에 perceptual 항(LPIPS + DINO)을 결합.
 - 핵심: perceptual을 **처음부터 켜지 않는다.** 고노이즈 **상위 30% timestep에서는 perceptual을 끄고**, 저노이즈 70% 구간에서만 활성. 고노이즈 구간에 perceptual을 걸면 sample diversity(recall)가 떨어지기 때문. → "perceptual은 예측이 clean 영역에 들어온 뒤 가장 유용함."
 - **가중치 명시**: `λ_LPIPS = 0.1` (P-DINO 0.01). ablation에서 "0.05는 너무 약, 0.5~1.0은 recall 저하 → **0.1이 최적**"이라 근거까지 제시 → 우리 `w_lpips=0.1`과 동일.
@@ -42,25 +41,27 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 - flow(w_flow=1)를 주 loss로 두고 perceptual(LPIPS)을 보조로 얹는 **백본 구조**.
 - perceptual을 **초기에 끄고 나중에 켜는 지연 전략**.
 
-**축의 차이(정직하게 명시):** PixelGen은 **diffusion timestep(노이즈 레벨)** 기준으로 게이팅하고, 우리는 **학습 스케줄(전체 step의 30%)** 기준 warmup으로 단순화함. 구현 축은 다르지만 "perceptual은 초기를 지나 예측이 안정된 뒤 켠다"는 철학은 동일.
+**차이:** PixelGen은 **diffusion timestep** 기준으로 게이팅하고, 우리는 **학습 스케줄(전체 step의 30%)** 기준 warmup으로 단순화함. 구현 축은 다르지만 "perceptual은 초기를 지나 예측이 안정된 뒤 켠다"는 철학은 동일.
 
 출처: [PixelGen, arXiv:2602.02493](https://arxiv.org/abs/2602.02493)
 
 #### 2.2 OSDFace — "Sobel 기반 edge 감독으로 경계 선명도 강화"
 
-**해당 논문에서 loss를 쓴 방식(how):**
-- one-step diffusion face restoration. perceptual loss로 LPIPS 대신 **DISTS**를 쓰되(LPIPS가 diffusion에서 artifact를 유발할 수 있어), **edge-aware 버전**을 도입:
+**논문의 사용 방식:**
+- one-step diffusion face restoration. perceptual로 LPIPS 대신 **DISTS** 채택(LPIPS는 diffusion에서 artifact 유발), **edge-aware 버전** 도입:
   ```
   L_EA-DISTS(Î, I) = L_DISTS(Î, I)  +  L_DISTS( S(Î), S(I) )
   ```
-  여기서 `S(·)`는 **Sobel operator**. 즉 원본 이미지에 더해 **Sobel로 뽑은 edge map에도 perceptual 거리를 건다.**
-- 같은 방식의 **EA-LPIPS**도 정의: 이미지를 Sobel로 처리한 뒤 LPIPS 계산.
-- 동기: "edge detail의 정확한 생성이 face restoration의 perceived sharpness에 필수" — 특히 **머리카락·피부 같은 영역**에서 texture/경계 디테일을 보존.
-- **가중치**: edge 성분(Sobel)은 EA-DISTS 안에서 non-edge DISTS와 **1:1로 더할 뿐 독립 계수가 없음**. 바깥 `L_gen = λ_dis·L_GAN + λ_ID·L_ID + λ_per·L_EA-DISTS + MSE`의 λ 수치(Stage2)는 논문 **미기재**.
+  `S(·)` = **Sobel operator**. 원본 이미지에 더해 **Sobel edge map에도 perceptual 거리**.
+- 동형 **EA-LPIPS**도 정의 (이미지 Sobel 처리 후 LPIPS).
+- 동기: "edge detail의 정확한 생성 = perceived sharpness에 필수" — 특히 **머리카락·피부**의 texture/경계 보존.
+- **가중치**: edge 성분(Sobel)은 EA-DISTS 내 non-edge DISTS와 **1:1 합산, 독립 계수 없음**. 바깥 `L_gen = λ_dis·L_GAN + λ_ID·L_ID + λ_per·L_EA-DISTS + MSE`의 λ 수치(Stage2)는 **미기재**.
 
 **우리가 가져온 것:**
-- **Sobel 기반 edge 감독으로 경계 선명도(perceived sharpness)를 강화**한다는 아이디어와 동기 — OSDFace와 목적이 동일.
-- 머리카락 경계/가닥의 디테일을 또렷하게 만들기 위해 edge 항을 별도로 두는 설계.
+- **Sobel 기반 edge 감독으로 경계 선명도 강화** — OSDFace와 동일 목적.
+- 머리카락 경계/가닥 디테일 강화를 위한 독립 edge 항.
+
+**차이:** OSDFace는 edge 감독을 **perceptual에 흡수** — `L_DISTS(S(Î), S(I))`로 **GT의 Sobel edge**와 perceptual 거리, non-edge와 **1:1**, 독립 가중치 없음. 우리는 edge를 **독립 항(`w_edge=0.05`)** 으로 분리, 대상도 GT가 아닌 **입력 sketch stroke**. Sobel 수단만 공유, ① 흡수 vs 독립 항, ② GT edge vs sketch stroke 두 축에서 상이. (선명도 정합만 높이려면 OSDFace식 EA-LPIPS 흡수도 가능.)
 
 출처: [OSDFace (CVPR 2025), arXiv:2411.17163](https://arxiv.org/abs/2411.17163)
 
@@ -99,14 +100,14 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 
 ## 커리큘럼 러닝 방식 선택 (Rehearsal / Replay)
 
-> 문제: unbraid(phase1, 3000장) → braid(phase2, 1000장) 2단계 학습에서 "phase2 epoch↑ → phase1 훼손(catastrophic forgetting), epoch↓ → braid 언더러닝" 딜레마.
+> 문제: unbraid(phase1, 3000장) → braid(phase2, 1000장) 2단계 학습에서 "phase2 epoch↑ → phase1 훼손(catastrophic forgetting), epoch↓ → braid 언더러닝" 딜레마.  
 > 결론: **epoch가 아니라 (1) 이전 데이터를 계속 섞는 replay 비율, (2) 신규/이전 loss 가중치로 해결.** 아래는 우리가 그대로 쓸 수 있는 diffusion 선례 2편 + 불균형 2단계 선례 1편.
 
 ### 1. 근거 (diffusion 직접 선례)
 
 | 연구 | 매체 | replay 방식 | **핵심 수치 (우리가 채택할 값)** | LR |
 |---|---|---|---|---|
-| **Latent Replay** ([2509.10529](https://arxiv.org/pdf/2509.10529)) | **Diffusion (T2I)** | loss 레벨 `L=(1−λ)L_new+λL_mem` | **λ_mem=0.5 (신규:이전=1:1)**, 매 step 신규와 **동일 크기**의 이전 latent를 replay, buffer 100장이면 충분 | b1×accum4 |
+| **Latent Replay** ([2509.10529](https://arxiv.org/pdf/2509.10529)) | **Diffusion (T2I)** | loss 레벨 `L=(1−λ)L_new+λL_mem` | **λ_mem=0.5 (신규:이전=1:1)**, 매 step 신규와 **동일 크기**의 이전 latent를 replay, 이전 데이터 전량이 아니라 소량 반복 replay로 충분 | b1×accum4 |
 | **DreamBooth** ([2208.12242](https://arxiv.org/pdf/2208.12242)) | Diffusion | prior-preservation(=자기생성 replay) | **λ_pp=1.0 (1:1)**, ~1000 step | **5e-6** |
 | **Two-phase imbalance** ([2112.14491](https://arxiv.org/pdf/2112.14491)) | 분류 | 단계 분리 | 균형 단계→원분포 미세조정 (재샘플링 단독보다 F1 +6.1%) | — |
 
@@ -117,11 +118,10 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 
 ### 2. HairDiT 적용 (epoch 증가 대신)
 
-현재 `joint_phase2 (dataset: both)`는 unbraid:braid = 3000:1000 = **3:1** → braid가 매 epoch **25%만** 등장(언더러닝). 선례의 1:1 기준으로 교정:
+**현재 상태**: phase1 = unbraid 3000 단독 → phase2 = **braid 1000 단독**(`phase2_braid`). phase2에 unbraid가 **전혀 들어가지 않아** phase1에서 형성한 **unbraid 능력이 훼손(catastrophic forgetting)** 되는 것이 핵심 문제. 선례의 "이전 데이터 replay"로 교정:
 
-1. **braid를 sampler로 1:1까지 상향** — `WeightedRandomSampler`로 braid 3× 업웨이트(물리 복제 X). unbraid replay는 유지하되 braid를 매 step 동등 노출. (Latent Replay λ=0.5 / DreamBooth λ=1.0 근거)
+1. **phase2에 unbraid replay 추가 → 매 배치 braid:unbraid = 1:1** — phase2를 braid 단독이 아니라 **unbraid 3000 + braid 1000**으로 구성하고, `WeightedRandomSampler`로 braid를 3× 자주 뽑아 매 배치 **50:50**으로 노출(물리 복제 X). unbraid를 계속 replay해 forgetting 방지. (Latent Replay λ=0.5 / DreamBooth λ=1.0 근거 — 단, sampler 방식과 loss-가중 방식 중 **sampler 하나만** 사용)
 2. **epoch 40 고정 폐기 → dual-val early-stopping** — unbraid val이 나빠지기 시작하는 지점 = forgetting 시작 = 정지점. joint_phase2 회귀 진단의 p2e5 정점과 일치.
 3. **LR 2e-5 → 5e-6 실험** — braid 소수 단계에서 DreamBooth 수준으로 낮추는 값 검토.
 
-> **한 줄:** "phase2 epoch 몇?" → **"braid replay를 1:1로, LR 5e-6급, unbraid val 기준 early-stopping."** diffusion 직접 선례(Latent Replay·DreamBooth)와 정합.
-
+> **한 줄:** 핵심 문제는 "phase2에서 unbraid 훼손". 답은 **"phase2를 braid 단독이 아니라 unbraid+braid 50:50으로 replay, LR 5e-6급, unbraid val 기준 early-stopping."** diffusion 직접 선례(Latent Replay·DreamBooth)와 정합.
