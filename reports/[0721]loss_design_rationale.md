@@ -24,7 +24,7 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 
 - **`L_flow`** — flow matching velocity 예측 L2 loss. 생성의 주 목적함수.
 - **`L_LPIPS`** — perceptual loss. perceptual 총칭 중 **LPIPS**(학습된 채널 가중치로 보정된 지각 거리)를 구체적으로 채택. Phase 1에서는 학습 진행도 30% 이후 활성(`lpips_warmup_frac=0.3`), Phase 2에서는 즉시 활성.
-- **`L_edge`** — 예측 이미지의 Sobel gradient 강도를 구한 뒤, **matte 내부에서 sketch stroke가 있는데 예측 edge가 약한 영역**을 penalize → 예측 머리카락 edge를 **입력 sketch stroke에 정렬**. Phase 2(braid)에서만 w_edge=0.05.
+- **`L_edge`** — 예측 이미지의 Sobel gradient 강도를 구한 뒤, **matte 내부에서 sketch stroke가 있는데 예측 edge가 약한 영역**을 penalize → 예측 머리카락 edge를 **sketch stroke로 masked된 GT/구조 edge에 정렬**. (sketch stroke의 기하는 matte 실루엣, 색은 GT 헤어색에서 파생 → stroke 자체가 GT/구조 파생물임에 유의.) Phase 2(braid)에서만 w_edge=0.05.
 
 ---
 
@@ -61,7 +61,7 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 - **Sobel 기반 edge 감독으로 경계 선명도 강화** — OSDFace와 동일 목적.
 - 머리카락 경계/가닥 디테일 강화를 위한 독립 edge 항.
 
-**차이:** OSDFace는 edge 감독을 **perceptual에 흡수** — `L_DISTS(S(Î), S(I))`로 **GT의 Sobel edge**와 perceptual 거리, non-edge와 **1:1**, 독립 가중치 없음. 우리는 edge를 **독립 항(`w_edge=0.05`)** 으로 분리, 대상도 GT가 아닌 **입력 sketch stroke**. Sobel 수단만 공유, ① 흡수 vs 독립 항, ② GT edge vs sketch stroke 두 축에서 상이. (선명도 정합만 높이려면 OSDFace식 EA-LPIPS 흡수도 가능.)
+**차이:** 두 방식 모두 **타깃은 GT 파생 edge**로 동계열이다(우리 sketch stroke = GT/구조 파생). 차이는 형태뿐: OSDFace는 edge 감독을 **perceptual에 흡수** — `L_DISTS(S(Î), S(I))`로 GT Sobel edge map **전체와 perceptual 매칭**, non-edge와 **1:1**, 독립 가중치 없음. 우리는 edge를 **독립 항(`w_edge=0.05`)** 으로 분리하고, GT edge map 전체 매칭이 아니라 **sketch stroke로 masked된 영역에서 edge-presence만 단방향으로** 강제. 즉 ① perceptual 흡수 vs pixel-space 독립 항, ② full GT edge 매칭 vs stroke-mask 단방향 presence 두 축에서 상이. (선명도 정합만 높이려면 OSDFace식 EA-LPIPS 흡수도 가능.)
 
 출처: [OSDFace (CVPR 2025), arXiv:2411.17163](https://arxiv.org/abs/2411.17163)
 
@@ -83,8 +83,8 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 | **perceptual 종류** | **LPIPS** | LPIPS + DINO | **DISTS** (LPIPS는 artifact 우려로 회피) |
 | **perceptual 가중치** | w_lpips=**0.1** | **λ_LPIPS=0.1** (ablation 명시) | λ_per 미기재 |
 | **perceptual 지연** | ✅ 학습 스케줄 30% warmup | ✅ **timestep(노이즈)** gating | ✗ (지연 없음) |
-| **edge 감독** | Sobel edge 강도 ↔ **입력 sketch stroke 정렬** | ✗ | Sobel edge map에 **perceptual 거리**(EA-DISTS) |
-| **edge 타깃** | **입력 sketch stroke** (matte 내부) | — | **GT 이미지**의 Sobel edge |
+| **edge 감독** | Sobel edge presence ↔ **stroke-mask 단방향** | ✗ | Sobel edge map에 **perceptual 거리**(EA-DISTS) |
+| **edge 타깃** | **GT/구조 파생 sketch stroke로 masked된 edge** | — | **GT 이미지**의 Sobel edge |
 | **edge 가중치** | w_edge=**0.05** (자체 선정, 근거 논문 없음) | — | 독립 계수 없음(EA-DISTS 내 1:1) |
 | **추가 항** | — | DINO perceptual | GAN + identity(ArcFace) loss |
 
@@ -92,9 +92,9 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 
 1. **지연 투입의 축이 다름** — PixelGen은 noise timestep 기준, 우리는 training-schedule 기준 warmup. (효과는 유사, 구현은 단순화)
 2. **perceptual 선택** — OSDFace는 LPIPS를 피하고 DISTS를 썼지만, 우리는 **LPIPS를 그대로 채택**. (flow 백본 + 지연 투입 조합에서는 PixelGen처럼 LPIPS가 유효하다고 판단)
-3. **edge loss의 타깃이 근본적으로 다름** — OSDFace의 edge 항은 **GT 이미지 edge와의 perceptual 일치**(복원 태스크)인 반면, 우리 edge 항은 **입력 sketch stroke와의 정렬**(sketch-conditioned 생성 태스크). 즉 OSDFace는 "정답 edge를 따라가라", 우리는 "사용자가 그린 stroke를 따라가라". Sobel을 쓴다는 수단만 공유하고 목적함수의 의미는 다름.
+3. **edge loss의 형태가 다름 (타깃은 동계열)** — 두 방식 모두 **GT 파생 edge를 타깃**으로 한다(우리 sketch stroke도 GT/구조 파생). 차이는 형태: OSDFace는 **GT edge map 전체를 perceptual로 매칭**, 우리는 **sketch stroke로 masked된 영역에서 edge-presence만 pixel-space·단방향**으로 강제. "정답 edge를 따라가라"는 목적은 공유하되, 매칭 대상(전체 map vs stroke mask)과 방식(perceptual vs pixel-space)이 다름.
 
-**요약:** 우리 loss는 **PixelGen(flow 백본 + perceptual 지연)** 의 골격에 **OSDFace(Sobel 기반 edge 감독)** 의 아이디어를 결합하되, ① perceptual을 LPIPS로 유지하고 ② 지연을 training-schedule warmup으로 단순화했으며 ③ edge 타깃을 GT가 아닌 **입력 sketch stroke**로 바꾼 **sketch-conditioned 변형**임.
+**요약:** 우리 loss는 **PixelGen(flow 백본 + perceptual 지연)** 의 골격에 **OSDFace(Sobel 기반 edge 감독)** 의 아이디어를 결합하되, ① perceptual을 LPIPS로 유지하고 ② 지연을 training-schedule warmup으로 단순화했으며 ③ edge 감독을 **GT edge map 전체 perceptual 매칭 대신, GT/구조 파생 sketch stroke로 masked된 영역의 pixel-space edge-presence**로 구현한 변형임.
 
 ---
 
@@ -103,9 +103,9 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 > 문제: unbraid(phase1, 3000장) → braid(phase2, 1000장) 2단계 학습에서 "phase2 epoch↑ → phase1 훼손(catastrophic forgetting), epoch↓ → braid 언더러닝" 딜레마.  
 > 결론: **epoch가 아니라 (1) 이전 데이터를 계속 섞는 replay 비율, (2) 신규/이전 loss 가중치로 해결.** 아래는 우리가 그대로 쓸 수 있는 diffusion 선례 2편 + 불균형 2단계 선례 1편.
 
-### 1. 근거 (diffusion 직접 선례)
+### 1. 근거 (diffusion 선례)
 
-| 연구 | 매체 | replay 방식 | **핵심 수치 (우리가 채택할 값)** | LR |
+| 연구 | 링크 | replay 방식 | **핵심 수치 (우리가 채택할 값)** | LR |
 |---|---|---|---|---|
 | **Latent Replay** ([2509.10529](https://arxiv.org/pdf/2509.10529)) | **Diffusion (T2I)** | loss 레벨 `L=(1−λ)L_new+λL_mem` | **λ_mem=0.5 (신규:이전=1:1)**, 매 step 신규와 **동일 크기**의 이전 latent를 replay, 이전 데이터 전량이 아니라 소량 반복 replay로 충분 | b1×accum4 |
 | **DreamBooth** ([2208.12242](https://arxiv.org/pdf/2208.12242)) | Diffusion | prior-preservation(=자기생성 replay) | **λ_pp=1.0 (1:1)**, ~1000 step | **5e-6** |
@@ -124,4 +124,4 @@ L_total = w_flow · L_flow  +  w_lpips(t) · L_LPIPS  +  w_edge · L_edge
 2. **epoch 40 고정 폐기 → dual-val early-stopping** — unbraid val이 나빠지기 시작하는 지점 = forgetting 시작 = 정지점. joint_phase2 회귀 진단의 p2e5 정점과 일치.
 3. **LR 2e-5 → 5e-6 실험** — braid 소수 단계에서 DreamBooth 수준으로 낮추는 값 검토.
 
-> **한 줄:** 핵심 문제는 "phase2에서 unbraid 훼손". 답은 **"phase2를 braid 단독이 아니라 unbraid+braid 50:50으로 replay, LR 5e-6급, unbraid val 기준 early-stopping."** diffusion 직접 선례(Latent Replay·DreamBooth)와 정합.
+> **요약:** 핵심 문제는 "phase2에서 unbraid 훼손". 답은 **"phase2를 braid 단독이 아니라 unbraid+braid 50:50으로 replay, LR 5e-6급, unbraid val 기준 early-stopping."** diffusion 직접 선례(Latent Replay·DreamBooth)와 정합.
