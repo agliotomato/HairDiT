@@ -1,11 +1,5 @@
 # [0723] 재학습 계획 — loss 밸런스 · 과적합 관리 · replay
 
-> 근거 문서: `reports/[0720]joint_phase2_feedback.md`, `reports/[0722]edge_flowval_and_final_plan.md`
-
-이 문서에서 두 학습을 다음 이름으로 지칭.
-- **mcs2 학습** — 7/15 이전 코드로 진행한 이전 학습. curriculum 방식이며 색·질감 지표가 가장 좋았던 성공 사례.
-- **joint 학습** — 7/15 이후 코드로 unbraid+braid 6천 장을 동시 학습한 직전 학습. **phase2 후반에 색이 빠지고 질감이 푸석해지며 실패.**
-
 ---
 
 ## 0. 확정 사항
