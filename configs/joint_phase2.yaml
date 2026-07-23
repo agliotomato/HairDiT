@@ -19,7 +19,7 @@ training:
   epochs: 40
   batch_size: 16
   gradient_accumulation_steps: 1
-  learning_rate: 1.0e-4
+  learning_rate: 2.0e-5     # finetune 수준 LR (mcs2 phase2와 동일). 수렴된 phase1 위 오버트레이닝 방지
   warmup_steps: 500
   mode: forward              # sketch→hair만 학습. hair→sketch(inverse)·cycle·decoder 미사용
   schedule: all
