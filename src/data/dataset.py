@@ -127,3 +127,34 @@ class HairRegionDataset(Dataset):
             sample = self.augmentation(sample)
 
         return sample
+
+
+def select_fixed_indices(n_items: int, n_select: int, seed: int) -> list[int]:
+    """[0, n_items) 중 n_select개를 고정 seed로 결정론적 선택.
+
+    HairRegionDataset.stems는 이미 정렬돼 있으므로(_build_stem_index), 이 인덱스를
+    그대로 데이터셋 인덱싱에 쓰면 재실행해도 항상 동일한 stem 집합이 선택된다
+    (held-out perceptual val 평가셋 고정용, [0724] planning §4-1).
+    """
+    g = torch.Generator().manual_seed(seed)
+    perm = torch.randperm(n_items, generator=g).tolist()
+    return sorted(perm[:n_select])
+
+
+class StratifiedBatchSampler:
+    """매 배치 unbraid n_a장 + braid n_b장 고정. s를 ~55로 안정화(scale-sync 리스크 3·4 대비, [0724] planning §5-2)."""
+
+    def __init__(self, n_unbraid, n_braid, split_idx, na=8, nb=8, seed=0, drop_last=True):
+        self.ua = list(range(split_idx)); self.ba = list(range(split_idx, split_idx + n_braid))
+        self.na, self.nb, self.seed, self.epoch = na, nb, seed, 0
+
+    def __iter__(self):
+        g = torch.Generator().manual_seed(self.seed + self.epoch); self.epoch += 1
+        ua = [self.ua[i] for i in torch.randperm(len(self.ua), generator=g)]
+        ba = [self.ba[i] for i in torch.randperm(len(self.ba), generator=g)]
+        nb_batches = min(len(ua) // self.na, len(ba) // self.nb)
+        for i in range(nb_batches):
+            yield ua[i * self.na:(i + 1) * self.na] + ba[i * self.nb:(i + 1) * self.nb]
+
+    def __len__(self):
+        return min(len(self.ua) // self.na, len(self.ba) // self.nb)

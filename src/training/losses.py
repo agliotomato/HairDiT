@@ -1,12 +1,14 @@
 """
 Flow matching losses for SD3.5 ControlNet hair generation.
 
-L_total = w_flow * L_flow + w_lpips * L_lpips + w_edge * L_edge
+L_total = w_flow * (L_flow^eq12 / s_clamped) + w_lpips * L_lpips + w_edge * L_edge
 
-L_flow: masked flow matching loss (paper Eq. 12)
+L_flow^eq12: masked flow matching loss (paper Eq. 12)
   - L_flow = ||m̃ ⊙ (v_pred - v_target)||² / (||m̃||₁ + ε), v_target = noise - latents
   - 분모가 헤어 면적(matte L1)이라 헤어 영역 크기와 무관하게 샘플 기여가 균등
   - matte 바깥 weight=0.0 (BLD: loss=0 outside matte)
+  - scale-sync: s_raw = numel(v_pred) / (Σ matte_latent + eps), s = clamp(s_raw, s_min, s_max).
+    matte에서만 계산되는 상수 배율(grad 없음) — flow 항에 1/s를 곱해 gradient 스케일을 맞춘다.
 L_lpips: perceptual loss on decoded x0_pred in matte region
   - x0_pred = x_t - sigma * v_pred  (flow matching x0 recovery)
   - decoded through SD3.5 VAE
@@ -135,7 +137,9 @@ class SketchEdgeAlignmentLoss(nn.Module):
             matte:    (B, 1, 512, 512) in [0, 1]
 
         Returns:
-            loss: scalar
+            loss:           scalar
+            stroke_density: scalar, ‖sketch_mask‖₁ / N — 모니터링용(s가 stroke 면적을
+                             못 잡는 리스크 대비, [0724] planning §2-b)
         """
         # Sketch stroke mask: any channel > threshold, intersected with matte
         sketch_mask = (sketch.max(dim=1, keepdim=True).values > self.stroke_threshold).float()
@@ -151,7 +155,7 @@ class SketchEdgeAlignmentLoss(nn.Module):
 
         # Penalize: stroke present AND edge absent
         loss = (sketch_mask * (1.0 - edge_mag)).mean()
-        return loss
+        return loss, sketch_mask.mean()
 
 
 class HairLoss(nn.Module):
@@ -164,6 +168,9 @@ class HairLoss(nn.Module):
         w_lpips:           weight for perceptual loss (default 0.1)
         w_edge:            weight for edge alignment loss (default 0.05)
         lpips_warmup_frac: fraction of total steps before LPIPS activates (pretrain only)
+        scale_sync:        divide the flow term by s=clamp(numel(v_pred)/‖matte_latent‖₁, s_min, s_max)
+                            to sync its gradient scale with lpips/edge (default True)
+        s_min, s_max:       clamp range for s (default 20.0 / 120.0)
     """
 
     def __init__(
@@ -173,6 +180,9 @@ class HairLoss(nn.Module):
         w_lpips: float = 0.1,
         w_edge: float = 0.05,
         lpips_warmup_frac: float = 0.3,
+        scale_sync: bool = True,
+        s_min: float = 20.0,
+        s_max: float = 120.0,
     ):
         super().__init__()
         assert phase in ("pretrain", "finetune"), f"Unknown phase: {phase}"
@@ -181,6 +191,8 @@ class HairLoss(nn.Module):
         self.w_lpips = w_lpips
         self.w_edge = w_edge
         self.lpips_warmup_frac = lpips_warmup_frac
+        self.scale_sync = scale_sync
+        self.s_min, self.s_max = s_min, s_max
 
         self.flow_loss = FlowMatchingLoss(outside_weight=0.0)
         self.perc_loss = PerceptualLoss()
@@ -200,6 +212,7 @@ class HairLoss(nn.Module):
         matte: Optional[torch.Tensor] = None,
         current_step: int = 0,
         total_steps: int = 1,
+        compute_R: bool = False,
     ) -> tuple[torch.Tensor, dict]:
         """
         Args:
@@ -214,15 +227,33 @@ class HairLoss(nn.Module):
             matte:         (B, 1, H, W) full-res matte in [0, 1]
             current_step:  current training step
             total_steps:   total training steps
+            compute_R:     log gradient-norm ratio R_lpips/R_edge w.r.t. v_pred (expensive; call
+                            sparingly, e.g. every 100 steps)
 
         Returns:
             total_loss: scalar tensor
             loss_dict:  dict with individual loss values (for logging)
         """
-        # Primary flow matching loss — always active
+        # Primary flow matching loss (paper Eq. 12) — always computed, logged raw
         l_flow = self.flow_loss(v_pred, v_target, matte_latent)
-        total_loss = self.w_flow * l_flow
-        loss_dict = {"loss_flow": l_flow.item()}
+        loss_dict = {"loss_flow_eq12": l_flow.item()}
+
+        if self.scale_sync:
+            # s is computed from matte only → constant scalar w.r.t. the graph (no grad)
+            s_raw = v_pred.numel() / (matte_latent.detach().float().sum() + 1e-6)
+            s = s_raw.clamp(self.s_min, self.s_max)
+            flow_term = self.w_flow * l_flow / s
+            loss_dict.update({
+                "s_raw":    float(s_raw),
+                "s":        float(s),
+                "clamp_hi": float(s_raw > self.s_max),
+                "clamp_lo": float(s_raw < self.s_min),
+            })
+        else:
+            flow_term = self.w_flow * l_flow
+
+        total_loss = flow_term
+        loss_dict["loss_flow"] = flow_term.item()   # actual flow term used for training
 
         # Determine if perceptual loss should activate
         lpips_active = (
@@ -230,6 +261,8 @@ class HairLoss(nn.Module):
             or current_step >= int(self.lpips_warmup_frac * total_steps)
         )
 
+        l_lpips = None
+        l_edge = None
         if lpips_active and vae is not None and x_t is not None and sigmas is not None:
             # Flow matching x0 recovery: x0 = x_t - sigma * v_pred
             # x0_pred must stay in the computation graph so LPIPS gradient
@@ -246,9 +279,20 @@ class HairLoss(nn.Module):
 
             # Edge loss: braid fine-tune only
             if self.phase == "finetune" and sketch is not None and matte is not None:
-                l_edge = self.edge_loss(pred_rgb_11, sketch, matte)
+                l_edge, stroke_density = self.edge_loss(pred_rgb_11, sketch, matte)
                 total_loss = total_loss + self.w_edge * l_edge
                 loss_dict["loss_edge"] = l_edge.item()
+                loss_dict["stroke_density"] = float(stroke_density)
+
+        # Gradient-norm ratio R (w.r.t. v_pred) — monitoring only, 100-step cadence
+        if compute_R and lpips_active:
+            g_flow = torch.autograd.grad(flow_term, v_pred, retain_graph=True)[0].norm()
+            if l_lpips is not None:
+                g_lp = torch.autograd.grad(self.w_lpips * l_lpips, v_pred, retain_graph=True)[0].norm()
+                loss_dict["R_lpips"] = float(g_lp / (g_flow + 1e-8))
+            if l_edge is not None:
+                g_ed = torch.autograd.grad(self.w_edge * l_edge, v_pred, retain_graph=True)[0].norm()
+                loss_dict["R_edge"] = float(g_ed / (g_flow + 1e-8))
 
         loss_dict["loss_total"] = total_loss.item()
         return total_loss, loss_dict

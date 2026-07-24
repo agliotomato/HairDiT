@@ -135,7 +135,8 @@ def main():
             with torch.autocast("cuda", dtype=torch.bfloat16):
                 x0 = noisy - sig * v.to(torch.bfloat16)
                 rgb = tr.vae.decode(x0)
-                return w_edge * lf.edge_loss(rgb, f["cond_image"], matte)
+                loss, _ = lf.edge_loss(rgb, f["cond_image"], matte)
+                return w_edge * loss
         g, l = measure(edge_loss_fn)
         agg["edge"].append(g); agg["loss_edge"].append(l / w_edge)
 

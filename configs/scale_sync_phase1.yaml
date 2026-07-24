@@ -1,0 +1,30 @@
+# configs/scale_sync_phase1.yaml — scale-sync 재학습 phase1 (unbraid pretrain, 40 epoch)
+# 근거: reports/[0723]retrain_plan.md, planning/[0724]retrain.md
+# phase는 pretrain: edge loss는 phase==finetune에서만 켜지므로(losses.py) edge:0 + LPIPS warmup.
+base: configs/base.yaml
+
+training:
+  phase: pretrain            # ← 명시 (edge off, lpips warmup)
+  dataset: unbraid           # phase1은 unbraid만
+  epochs: 40
+  batch_size: 16             # ← 누락 금지! 기본값 4 → s≈36 전제 붕괴
+  learning_rate: 1.0e-4
+  warmup_steps: 500
+  mode: forward
+  schedule: all
+  gate_alpha: 1.0
+  resume: null
+  loss_weights:
+    flow: 1.0
+    lpips: 0.1
+    edge: 0.0                 # pretrain
+    lpips_warmup_frac: 0.3
+    scale_sync: true          # ← 신규
+    s_min: 20.0
+    s_max: 120.0
+
+checkpointing:
+  output_dir: checkpoints/scale_sync_phase1/
+  eval_every: 5               # ← flow val (참고용, 드물게)
+  perceptual_every: 1         # ← perceptual val 매 epoch (조기종료 신호)
+  save_every: 5               # ← 정점 근처 확보

@@ -271,6 +271,80 @@ def run_sampling(
 
 
 @torch.no_grad()
+def run_sampling_batched(
+    controlnet, transformer, scheduler, schedule,
+    sketch, matte, num_steps, device, B,
+    generator: torch.Generator | None = None,
+    vae=None, face=None, bld_mode="off", bld_soft_steps=None,
+    gate_alpha: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """run_sampling의 배치판 — B장을 한 번에 샘플링(순차 호출 대비 대폭 단축).
+
+    perceptual val(trainer._perceptual_validate, [0724] planning §4-2)에서 매 epoch
+    호출되므로 bld_mode="off"(배경 합성 없음)가 기본. sketch/matte는 이미 (B,3,512,512)/
+    (B,1,512,512)로 스택된 상태로 전달받는다 (기존 run_sampling은 단일 이미지 전용).
+
+    generator: CPU에서 noise를 뽑은 뒤 .to(device) — CUDA generator를 직접 쓰면 CPU
+    generator와 다른 시퀀스가 나오므로, 재현성을 위해 항상 CPU에서 생성한다.
+    """
+    scheduler.set_timesteps(num_steps, device=device)
+
+    if generator is not None:
+        noise = torch.randn(B, 16, 64, 64, generator=generator, dtype=torch.bfloat16).to(device)
+    else:
+        noise = torch.randn(B, 16, 64, 64, device=device, dtype=torch.bfloat16)
+    latents = noise.clone()
+
+    sketch_bf = sketch.to(device=device, dtype=torch.bfloat16)
+    matte_bf  = matte.to(device=device, dtype=torch.bfloat16)
+
+    do_bg    = face is not None and vae is not None and bld_mode != "off"
+    per_step = do_bg and bld_mode == "full"
+    if do_bg:
+        x0_bg    = vae.encode(face.to(device=device, dtype=torch.bfloat16))    # (B,16,64,64)
+        mask_lat = F.interpolate(matte_bf, size=(64, 64), mode="area")         # (B,1,64,64)
+
+    for i, t in enumerate(scheduler.timesteps):
+        sigmas_1d = scheduler.sigmas[i].to(device=device, dtype=torch.bfloat16).view(1, 1, 1, 1).expand(B, 1, 1, 1)
+        timesteps_1d = t.to(device=device).float().expand(B)
+
+        if per_step:
+            noised_bg = (1.0 - sigmas_1d) * x0_bg + sigmas_1d * noise
+            m = mask_lat
+            if bld_soft_steps is not None and i >= bld_soft_steps:
+                m = (mask_lat > 1e-4).to(mask_lat.dtype)
+            latents = m * latents + (1.0 - m) * noised_bg
+
+        block_samples, null_enc_hs, null_pooled = controlnet(
+            noisy_latent=latents,
+            sketch=sketch_bf,
+            matte=matte_bf,
+            timesteps=timesteps_1d,
+        )
+        block_samples = [s.to(dtype=torch.bfloat16) for s in block_samples]
+
+        if schedule != "none":
+            block_samples = gate_block_samples(block_samples, matte_bf, schedule, gate_alpha=gate_alpha)
+
+        v_pred = transformer_forward_full_residual(
+            transformer,
+            block_samples,
+            hidden_states=latents,
+            encoder_hidden_states=null_enc_hs.to(dtype=torch.bfloat16),
+            pooled_projections=null_pooled.to(dtype=torch.bfloat16),
+            timestep=timesteps_1d,
+            return_dict=False,
+        )[0]
+
+        latents = scheduler.step(v_pred, t, latents, return_dict=False)[0]
+
+    if do_bg and bld_mode == "final":
+        latents = mask_lat * latents + (1.0 - mask_lat) * x0_bg
+
+    return latents, (x0_bg if do_bg else None)
+
+
+@torch.no_grad()
 def decode_hair(vae, hair_latent: torch.Tensor) -> torch.Tensor:
     """hair latent → (1,3,512,512) [0,1]."""
     image = vae.decode(hair_latent)
@@ -294,11 +368,24 @@ def composite_full(
 # Input collection
 # ---------------------------------------------------------------------------
 
+def _match_by_stem(dir_arg: str | None, bare: str, sketch_stem: str) -> Path | None:
+    if not dir_arg:
+        return None
+    dp = Path(dir_arg)
+    for ext in (".png", ".jpg"):
+        for cand_stem in (bare, sketch_stem):
+            c = dp / (cand_stem + ext)
+            if c.exists():
+                return c
+    return None
+
+
 def collect_pairs(
     sketch_arg: str,
     matte_arg: str | None,
     face_arg: str | None,
-) -> list[tuple[Path, Path | None, Path | None, str]]:
+    recolor_face_arg: str | None = None,
+) -> list[tuple[Path, Path | None, Path | None, Path | None, str]]:
     sketch_path = Path(sketch_arg)
     if sketch_path.is_dir():
         files = sorted(sketch_path.glob("*_sketch.png")) or \
@@ -306,7 +393,7 @@ def collect_pairs(
         pairs = []
         for sf in files:
             bare = sf.stem.replace("_sketch", "")
-            mf = ff = None
+            mf = ff = rf = None
             if matte_arg:
                 mp = Path(matte_arg)
                 for ext in (".png", ".jpg"):
@@ -317,23 +404,16 @@ def collect_pairs(
                             break
                     if mf:
                         break
-            if face_arg:
-                fp = Path(face_arg)
-                for ext in (".png", ".jpg"):
-                    for cand_stem in (bare, sf.stem):
-                        c = fp / (cand_stem + ext)
-                        if c.exists():
-                            ff = c
-                            break
-                    if ff:
-                        break
-            pairs.append((sf, mf, ff, bare))
+            ff = _match_by_stem(face_arg, bare, sf.stem)
+            rf = _match_by_stem(recolor_face_arg, bare, sf.stem)
+            pairs.append((sf, mf, ff, rf, bare))
         return pairs
     else:
         mf = Path(matte_arg) if matte_arg else None
         ff = Path(face_arg)  if face_arg  else None
+        rf = Path(recolor_face_arg) if recolor_face_arg else None
         bare = sketch_path.stem.replace("_sketch", "")
-        return [(sketch_path, mf, ff, bare)]
+        return [(sketch_path, mf, ff, rf, bare)]
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +426,9 @@ def main():
     parser.add_argument("--matte",       default=None)
     parser.add_argument("--face",        default=None,
                         help="얼굴 이미지 (있으면 latent 합성 full image 출력)")
+    parser.add_argument("--recolor_face", default=None,
+                        help="--recolor_from_gt 색 추출용 별도 이미지 (미지정 시 --face 사용). "
+                             "합성 배경(--face)과 GT 색 추출 소스가 다를 때 사용.")
     parser.add_argument("--checkpoint",  required=True)
     parser.add_argument("--config",      required=True)
     parser.add_argument("--num_steps",   type=int, default=20)
@@ -421,7 +504,7 @@ def main():
         model_id, subfolder="scheduler", local_files_only=local_files_only,
     )
 
-    pairs = collect_pairs(args.sketch, args.matte, args.face)
+    pairs = collect_pairs(args.sketch, args.matte, args.face, args.recolor_face)
     print(f"\n{len(pairs)}개 스케치 처리 (schedule={schedule})\n")
 
     hair_color = None
@@ -429,7 +512,7 @@ def main():
         hair_color = tuple(int(x) for x in args.hair_color.split(","))
         print(f"Stroke 색 교체: RGB{hair_color}")
 
-    for sketch_file, matte_file, face_file, stem in tqdm(pairs, desc="Generating"):
+    for sketch_file, matte_file, face_file, recolor_face_file, stem in tqdm(pairs, desc="Generating"):
         if args.seed is not None:
             torch.manual_seed(args.seed)
             if torch.cuda.is_available():
@@ -446,10 +529,14 @@ def main():
         face = load_face(face_file) if face_file and face_file.exists() else None
 
         if args.recolor_from_gt:
-            if face is None:
-                print(f"  [WARNING] {stem}: GT(face) 없음 → recolor 생략, 원본 sketch 사용")
+            if recolor_face_file and recolor_face_file.exists():
+                gt_color_img = load_face(recolor_face_file)
             else:
-                sketch = recolor_sketch_from_gt(sketch, face, matte)
+                gt_color_img = face
+            if gt_color_img is None:
+                print(f"  [WARNING] {stem}: GT(recolor_face/face) 없음 → recolor 생략, 원본 sketch 사용")
+            else:
+                sketch = recolor_sketch_from_gt(sketch, gt_color_img, matte)
         elif hair_color:
             sketch = recolor_sketch(sketch, hair_color)
         hair_latent, face_latent_bld = run_sampling(
