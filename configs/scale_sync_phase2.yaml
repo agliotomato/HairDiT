@@ -1,0 +1,33 @@
+# configs/scale_sync_phase2.yaml — scale-sync 재학습 phase2 (unbraid+braid replay finetune, 40 epoch)
+# 근거: reports/[0723]retrain_plan.md, planning/[0724]retrain.md
+# phase1 → phase2 이관은 resume_from(weights-only) + EMA 시작 가중치 사용. --resume(full resume)
+# 금지 — start_epoch/optimizer/lr_scheduler state가 함께 복원돼 epoch 단축·LR 5e-6 무시 함정.
+base: configs/base.yaml
+
+training:
+  phase: finetune             # ← ⚠️ 필수! edge 활성화 + lpips always-on (joint의 pretrain에서 변경)
+  dataset: replay             # unbraid_train(3000) + braid_train(1000), 8:8 stratified
+  sample_seed: 0              # 8:8 sampler 셔플 seed (재현성)
+  epochs: 40
+  batch_size: 16              # batch_sampler(8+8)가 실질 결정하지만 명시 유지
+  learning_rate: 5.0e-6       # ← 2e-5에서 인하 (과적합 감속)
+  warmup_steps: 500
+  mode: forward
+  schedule: all
+  gate_alpha: 1.0
+  resume: null                # ⚠️ phase1 이어받기는 아래 resume_from 사용 (--resume 금지)
+  resume_from: checkpoints/scale_sync_phase1/best.pth   # ← weights-only 이관 (+ EMA 있으면 EMA로 덮어씀)
+  loss_weights:
+    flow: 1.0
+    lpips: 0.1
+    edge: 0.05                # ← mcs2 parity 유지 (교수님 확정, 올리지 않음)
+    lpips_warmup_frac: 0.3
+    scale_sync: true
+    s_min: 20.0
+    s_max: 120.0
+
+checkpointing:
+  output_dir: checkpoints/scale_sync_phase2/
+  eval_every: 5               # flow val (참고용)
+  perceptual_every: 1         # perceptual val 매 epoch (조기종료)
+  save_every: 5

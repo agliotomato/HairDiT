@@ -35,6 +35,7 @@ import math
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -46,12 +47,18 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.data.augmentation import build_augmentation_pipeline
-from src.data.dataset import HairRegionDataset
+from src.data.dataset import HairRegionDataset, StratifiedBatchSampler, select_fixed_indices
 from src.data.utils import resize_matte_to_latent
 from src.models.controlnet_sd35 import HairControlNet, gate_block_samples, transformer_forward_full_residual
 from src.models.vae_wrapper import VAEWrapper
 from src.training.ema import EMAModel
 from src.training.losses import HairLoss
+
+# held-out 16+16 평가셋 선택 + perceptual val 생성 noise 공통 seed.
+# 8:8 stratified sampler의 sample_seed:0 관례와 통일 ([0724] planning §4-1/§4-2).
+PERCEPTUAL_VAL_SEED = 0
+PERCEPTUAL_VAL_N = 16
+PERCEPTUAL_VAL_STEPS = 20
 
 
 def _flatten_config(cfg: dict, prefix: str = "") -> dict:
@@ -68,6 +75,18 @@ def _flatten_config(cfg: dict, prefix: str = "") -> dict:
         else:
             out[key] = str(v)  # list 등은 문자열로
     return out
+
+
+def _to_u8_hwc(t: torch.Tensor) -> list[np.ndarray]:
+    """(B,C,H,W) float [0,1] → (H,W,C) uint8 numpy 배열 리스트 (scripts/eval_metrics.py 지표 입력용)."""
+    arr = (t.float().clamp(0, 1).detach().cpu().permute(0, 2, 3, 1).numpy() * 255).round().astype(np.uint8)
+    return [arr[i] for i in range(arr.shape[0])]
+
+
+def _to_u8_hw(t: torch.Tensor) -> list[np.ndarray]:
+    """(B,1,H,W) float [0,1] → (H,W) uint8 numpy 배열 리스트."""
+    arr = (t.float().clamp(0, 1).detach().cpu().squeeze(1).numpy() * 255).round().astype(np.uint8)
+    return [arr[i] for i in range(arr.shape[0])]
 
 
 class Trainer:
@@ -109,6 +128,7 @@ class Trainer:
 
         self._setup_models()
         self._setup_data()
+        self._setup_perceptual_eval()
         self._setup_optimizer()
         self._prepare_accelerator()
 
@@ -118,6 +138,9 @@ class Trainer:
             w_lpips=config["training"]["loss_weights"].get("lpips", 0.1),
             w_edge=config["training"]["loss_weights"].get("edge", 0.0),
             lpips_warmup_frac=config["training"]["loss_weights"].get("lpips_warmup_frac", 0.3),
+            scale_sync=config["training"]["loss_weights"].get("scale_sync", True),
+            s_min=config["training"]["loss_weights"].get("s_min", 20.0),
+            s_max=config["training"]["loss_weights"].get("s_max", 120.0),
         ).to(self.accelerator.device)
 
         self.ema = EMAModel(
@@ -154,6 +177,12 @@ class Trainer:
         self.best_val_loss = float("inf")
         self.start_epoch   = 0
         self._current_epoch = 0
+
+        # perceptual val 조기종료 / 정점 ckpt 선정 상태 ([0724] planning §4-3)
+        self._best_unbraid = float("inf")
+        self._best_select  = float("inf")
+        self._patience     = 0
+
         self._restore_training_state()
 
     # ------------------------------------------------------------------
@@ -214,6 +243,15 @@ class Trainer:
             local_files_only=local_files_only,
         )
 
+        # perceptual val 전용 별도 scheduler 인스턴스. set_timesteps()가 self.sigmas/timesteps를
+        # num_inference_steps 길이로 덮어써 학습용 _sample_sigmas()의 인덱싱을 깨뜨리므로,
+        # run_sampling_batched(§4-2)에는 반드시 이 인스턴스를 넘긴다.
+        self.sample_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+            model_id,
+            subfolder="scheduler",
+            local_files_only=local_files_only,
+        )
+
         # Inverse mode: load frozen forward ControlNet for cycle self-distillation
         if self.inverse_mode and self.w_cycle > 0.0:
             fwd_ckpt = cfg["training"].get("forward_checkpoint")
@@ -240,6 +278,13 @@ class Trainer:
             ckpt = torch.load(resume_from, map_location="cpu", weights_only=True)
             self.controlnet.load_state_dict(ckpt["controlnet"])
             self.accelerator.print(f"Loaded Phase 1 weights from {resume_from}")
+            # best.pth는 EMA 기준 perceptual val로 선정되므로, EMA shadow가 있으면 그
+            # 값으로 다시 덮어써 phase2 시작 가중치를 선정 근거와 일치시킨다([0724] planning §6).
+            # EMAModel.state_dict()의 shadow는 named_parameters(requires_grad=True) 부분집합이라
+            # strict=False로 로드(버퍼/고정 파라미터는 그대로 둠).
+            if "ema" in ckpt:
+                self.controlnet.load_state_dict(ckpt["ema"]["shadow"], strict=False)
+                self.accelerator.print(f"Loaded Phase 1 EMA weights from {resume_from}")
 
         # Full resume: load controlnet weights early (optimizer init needs correct params)
         resume = cfg["training"].get("resume")
@@ -252,6 +297,7 @@ class Trainer:
         aug = build_augmentation_pipeline(self.phase)
 
         dataset_name = cfg["dataset"]
+        replay_sampler = None
         if dataset_name == "both":
             from torch.utils.data import ConcatDataset
             train_ds = ConcatDataset([
@@ -262,25 +308,75 @@ class Trainer:
                 HairRegionDataset(split="unbraid_test"),
                 HairRegionDataset(split="braid_test"),
             ])
+        elif dataset_name == "replay":
+            # 서브샘플 없이 base 풀 전부 사용(unbraid 3,000 + braid 1,000). 8:8 stratified
+            # sampler가 매 epoch unbraid 1,000(무작위 재표집) + braid 1,000(전부)을 뽑아
+            # 배치 단위 1:1을 유지한다 ([0724] planning §5-1).
+            from torch.utils.data import ConcatDataset
+            ub = HairRegionDataset(split="unbraid_train", augmentation=aug)
+            br = HairRegionDataset(split="braid_train",   augmentation=aug)
+            train_ds = ConcatDataset([ub, br])
+            self._domain_split = len(ub)       # 0..len(ub)-1 = unbraid, 이후 = braid
+            val_ds = ConcatDataset([
+                HairRegionDataset(split="unbraid_test"),
+                HairRegionDataset(split="braid_test"),
+            ])
+            replay_sampler = StratifiedBatchSampler(
+                n_unbraid=len(ub), n_braid=len(br), split_idx=self._domain_split,
+                na=8, nb=8, seed=cfg.get("sample_seed", 0),
+            )
         else:
             train_ds = HairRegionDataset(split=f"{dataset_name}_train", augmentation=aug)
             val_ds   = HairRegionDataset(split=f"{dataset_name}_test")
 
         bs = cfg.get("batch_size", 4)
-        self.train_loader = DataLoader(
-            train_ds,
-            batch_size=bs,
-            shuffle=True,
-            num_workers=4,
-            pin_memory=True,
-            drop_last=True,
-        )
+        if replay_sampler is not None:
+            self.train_loader = DataLoader(
+                train_ds,
+                batch_sampler=replay_sampler,
+                num_workers=4,
+                pin_memory=True,
+            )
+        else:
+            self.train_loader = DataLoader(
+                train_ds,
+                batch_size=bs,
+                shuffle=True,
+                num_workers=4,
+                pin_memory=True,
+                drop_last=True,
+            )
         self.val_loader = DataLoader(
             val_ds,
             batch_size=bs,
             shuffle=False,
             num_workers=2,
         )
+
+    def _setup_perceptual_eval(self):
+        """held-out 16(unbraid_test)+16(braid_test) 고정 평가셋 준비 ([0724] planning §4-1).
+
+        train split에서 뽑지 않음 — 과적합·forgetting 진단이 목적이므로 held-out 필수.
+        서버 데이터의 실제 파일명을 미리 알 수 없으므로, 정렬된 stem 목록을 고정 seed로
+        셔플해 결정론적으로 선택한다(재실행해도 항상 동일한 16장이 나옴).
+        """
+        n = PERCEPTUAL_VAL_N
+        ub_ds = HairRegionDataset(split="unbraid_test")
+        br_ds = HairRegionDataset(split="braid_test")
+        ub_idx = select_fixed_indices(len(ub_ds), n, seed=PERCEPTUAL_VAL_SEED)
+        br_idx = select_fixed_indices(len(br_ds), n, seed=PERCEPTUAL_VAL_SEED)
+
+        self._pval_unbraid = self._collate_fixed(ub_ds, ub_idx)
+        self._pval_braid   = self._collate_fixed(br_ds, br_idx)
+        self.accelerator.print(
+            f"[PerceptualVal] held-out eval set: {n} unbraid_test + {n} braid_test "
+            f"(seed={PERCEPTUAL_VAL_SEED})"
+        )
+
+    @staticmethod
+    def _collate_fixed(ds: HairRegionDataset, indices: list[int]) -> dict:
+        items = [ds[i] for i in indices]
+        return {k: torch.stack([it[k] for it in items]) for k in ("sketch", "matte", "target")}
 
     def _setup_optimizer(self):
         cfg = self.cfg["training"]
@@ -357,6 +453,7 @@ class Trainer:
         cfg = self.cfg["training"]
         epochs = cfg.get("epochs", 200)
         eval_every = self.cfg["checkpointing"].get("eval_every", 10)
+        perceptual_every = self.cfg["checkpointing"].get("perceptual_every", 1)
         save_every = self.cfg["checkpointing"].get("save_every", 20)
         grad_clip = cfg.get("gradient_clip", 1.0)
 
@@ -364,6 +461,14 @@ class Trainer:
             f"Starting {self.phase} training for {epochs} epochs"
             + (f" (resuming from epoch {self.start_epoch})" if self.start_epoch else "")
         )
+
+        # epoch-0 baseline — 학습 시작 전 상태로 perceptual val 1회 실행해 _best_unbraid의
+        # 앵커로 사용. phase2 이관 직후 상태를 baseline으로 잡아야 게이트가 '이미 1 epoch
+        # 열화된 값'에 앵커링되지 않는다. phase1은 미학습 모델이라 baseline이 커서 무해
+        # ([0724] planning §4-3).
+        pval0 = self._perceptual_validate()
+        self._best_unbraid = min(self._best_unbraid, pval0["dE_unbraid"])
+        self.accelerator.log({f"{k}/ep0": v for k, v in pval0.items()}, step=self.global_step)
 
         for epoch in range(self.start_epoch, epochs):
             self._current_epoch = epoch + 1
@@ -398,6 +503,8 @@ class Trainer:
             avg_loss = sum(epoch_losses) / len(epoch_losses)
             self.accelerator.print(f"Epoch {epoch+1} avg loss: {avg_loss:.4f}")
 
+            # flow val — 참고용으로만 드물게 로깅(품질 지표가 아니므로 best.pth 저장은
+            # 여기서 하지 않는다; 정점 선정은 아래 perceptual val 기준으로만 함, [0724] planning §4-3).
             if (epoch + 1) % eval_every == 0:
                 val_loss = self._validate()
                 self.accelerator.print(f"Val loss: {val_loss:.4f}")
@@ -405,12 +512,57 @@ class Trainer:
                     {"val_loss": val_loss, "epoch": epoch + 1},
                     step=self.global_step,
                 )
-                if val_loss < self.best_val_loss:
-                    self.best_val_loss = val_loss
-                    self._save_checkpoint("best.pth")
+                self.best_val_loss = min(self.best_val_loss, val_loss)
+
+            stop = False
+            if (epoch + 1) % perceptual_every == 0:
+                pval = self._perceptual_validate()
+                self.accelerator.log(pval, step=self.global_step)
+
+                u = pval["dE_unbraid"]                                  # ↓ 좋음
+                self._best_unbraid = min(self._best_unbraid, u)
+
+                # (1) 조기종료 트리거 — unbraid '악화'(best 대비 5% 초과)가 3 epoch 연속이면 stop.
+                # '미개선'이 아니라 '악화'로 판정하는 이유: phase2의 unbraid 목표는 '유지'이지
+                # '개선'이 아니라서, 미개선 기준이면 거의 즉시 발동해 braid를 배우기 전에 끝난다.
+                if u > self._best_unbraid * 1.05:
+                    self._patience += 1
+                else:
+                    self._patience = 0
+
+                # (2) 정점 ckpt 저장 — phase별 '채택 기준'으로 best.pth 직접 저장.
+                # save_every 격자와 무관하게 정점을 항상 보존한다.
+                if self.phase == "pretrain":                            # phase1: unbraid 품질이 목표
+                    if u < self._best_select - 1e-4:
+                        self._best_select = u
+                        self._save_checkpoint("best.pth")
+                else:                                                   # phase2: braid가 목표, unbraid 비악화 게이트
+                    b = pval["lpips_braid"]                             # ↓ 좋음 (edge_iou는 보조 확인)
+                    unbraid_ok = (u <= self._best_unbraid * 1.05)       # epoch-0 baseline 포함 최적 대비 5% 이내만 후보
+                    if unbraid_ok and b < self._best_select - 1e-4:
+                        self._best_select = b
+                        self._save_checkpoint("best.pth")
+                    # 게이트와 무관한 braid 최적도 참고용으로 별도 보존 (fallback 재료)
+                    if b < getattr(self, "_best_braid_any", float("inf")) - 1e-4:
+                        self._best_braid_any = b
+                        self._save_checkpoint("best_ungated.pth")
+
+                if self._patience >= 3:
+                    self.accelerator.print(f"Early stop at epoch {epoch+1}")
+                    stop = True
 
             if (epoch + 1) % save_every == 0:
                 self._save_checkpoint(f"epoch_{epoch+1}.pth")
+
+            if stop:
+                break
+
+        if self.phase == "finetune" and not (self.output_dir / "best.pth").exists():
+            self.accelerator.print(
+                "[WARNING] best.pth was never saved — unbraid non-degradation gate never "
+                "passed (forgetting too large). Check best_ungated.pth and epoch_*.pth for "
+                "manual selection (no automatic fallback)."
+            )
 
         self._save_checkpoint("final.pth")
         self.accelerator.end_training()
@@ -489,6 +641,7 @@ class Trainer:
             v_target = (noise - latents).to(dtype=torch.bfloat16)
 
             # 8. Direct supervision loss
+            compute_R = (self.global_step % 100 == 0)
             total_loss, log_dict = self.loss_fn(
                 v_pred=v_pred,
                 v_target=v_target,
@@ -501,6 +654,7 @@ class Trainer:
                 matte=loss_mask,
                 current_step=self.global_step,
                 total_steps=self.total_steps,
+                compute_R=compute_R,
             )
 
             controlnet_unwrapped = self.accelerator.unwrap_model(self.controlnet)
@@ -624,6 +778,80 @@ class Trainer:
             n_batches += 1
 
         return total_loss / max(n_batches, 1)
+
+    @torch.no_grad()
+    def _perceptual_validate(self) -> dict:
+        """held-out 16(unbraid)+16(braid) 고정셋에 EMA 가중치로 생성 후 품질 지표 측정
+        ([0724] planning §4-2). 32장을 한 번에 배치 샘플링(순차 대비 대폭 단축)한다.
+
+        scripts/eval_metrics.py의 공식(CIEDE2000 shade-정규화 평균색 ΔE, Canny edge 기반
+        IoU, alex-net LPIPS)을 그대로 재사용해 최종 리포트 수치와 일치시킨다.
+
+        Returns:
+            {"dE_unbraid":.., "lpips_unbraid":.., "edge_iou_braid":.., "lpips_braid":..}
+        """
+        from scripts.eval_metrics import (
+            _safe_mean,
+            canny_edges,
+            compute_delta_e_hue,
+            edge_iou,
+            hair_masked_lpips,
+        )
+        from scripts.infer_custom import decode_hair, run_sampling_batched
+
+        cn = self.accelerator.unwrap_model(self.controlnet)
+        # EMA API는 apply_to(model)/restore_to(model, original) — copy_to()는 없음(ema.py:52-62).
+        # 원본 스냅샷은 호출자가 직접 떠야 한다.
+        orig = {k: v.detach().clone() for k, v in cn.named_parameters() if v.requires_grad}
+        was_training = cn.training
+        self.ema.apply_to(cn)
+        cn.eval()
+
+        try:
+            device = self.accelerator.device
+            n_ub = self._pval_unbraid["sketch"].shape[0]
+
+            sketch = torch.cat([self._pval_unbraid["sketch"], self._pval_braid["sketch"]], dim=0).to(device)
+            matte  = torch.cat([self._pval_unbraid["matte"],  self._pval_braid["matte"]],  dim=0).to(device)
+            target = torch.cat([self._pval_unbraid["target"], self._pval_braid["target"]], dim=0).to(device)
+            B = sketch.shape[0]
+
+            # 생성 noise seed 고정 → epoch 간 paired 비교(분산↓).
+            gen = torch.Generator().manual_seed(PERCEPTUAL_VAL_SEED)
+            hair_latent, _ = run_sampling_batched(
+                cn, self.transformer, self.sample_scheduler, self.schedule,
+                sketch, matte, PERCEPTUAL_VAL_STEPS, device, B,
+                generator=gen, gate_alpha=self.gate_alpha,
+            )
+            pred = decode_hair(self.vae, hair_latent)   # (B,3,512,512) [0,1]
+
+            pred_np   = _to_u8_hwc(pred)
+            gt_np     = _to_u8_hwc(target)
+            matte_np  = _to_u8_hw(matte)
+            sketch_np = _to_u8_hwc(sketch)
+
+            lpips_ub, de_ub = [], []
+            lpips_br, iou_br = [], []
+            for i in range(B):
+                m = matte_np[i]
+                lp = hair_masked_lpips(pred_np[i], gt_np[i], m)
+                if i < n_ub:
+                    lpips_ub.append(lp)
+                    de_ub.append(compute_delta_e_hue(pred_np[i], gt_np[i], m, m.astype(np.float64) / 255.0))
+                else:
+                    lpips_br.append(lp)
+                    iou_br.append(edge_iou(canny_edges(pred_np[i]), canny_edges(sketch_np[i]), m))
+
+            return {
+                "dE_unbraid":     _safe_mean(de_ub),
+                "lpips_unbraid":  _safe_mean(lpips_ub),
+                "lpips_braid":    _safe_mean(lpips_br),
+                "edge_iou_braid": _safe_mean(iou_br),
+            }
+        finally:
+            self.ema.restore_to(cn, orig)
+            if was_training:
+                cn.train()
 
     def _restore_training_state(self):
         """optimizer / ema / lr_scheduler / step / epoch 전체 복원 (동일 학습 재개용)."""
