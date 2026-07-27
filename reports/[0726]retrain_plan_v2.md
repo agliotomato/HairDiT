@@ -46,10 +46,14 @@ phase2 8:8 replay 배치엔 unbraid 샘플도 절반 섞여 있는데, braid 전
 
 w_edge 인상(0.05→0.086) 실험에서 braid는 개선되고 unbraid의 dE·lpips는 악화되는 패턴으로 실측 확인 — unbraid 성능저하의 유력 원인.
 
-| | unbraid | braid |
+| | phase1 ep40 | phase2 ep35 |
 |---|---|---|
-| **phase1 ep40** | <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch/CM_1068.png" width="140"> <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch/CM_1067.png" width="140"> <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch/CM_1172.png" width="140"> | <img src="../outputs/0725_phase1/epoch40/seed42/unbraid_new/sketch/braid_4156.png" width="140"> <img src="../outputs/0725_phase1/epoch40/seed42/unbraid_new/sketch/braid_4276.png" width="140"> <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch/wavy_753.png" width="140"> |
-| **phase2 ep35** | <img src="../outputs/0725_phase2/epoch35/seed42/paper/sketch/CM_1068.png" width="140"> <img src="../outputs/0725_phase2/epoch35/seed42/paper/sketch/CM_1067.png" width="140"> <img src="../outputs/0725_phase2/epoch35/seed42/paper/sketch/CM_1172.png" width="140"> | <img src="../outputs/0725_phase2/epoch35/seed42/unbraid_new/sketch/braid_4156.png" width="140"> <img src="../outputs/0725_phase2/epoch35/seed42/unbraid_new/sketch/braid_4276.png" width="140"> <img src="../outputs/0725_phase2/epoch35/seed42/paper/sketch/wavy_753.png" width="140"> |
+| **CM_1068 (unbraid)** | <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch/CM_1068.png" width="140"> | <img src="../outputs/0725_phase2/epoch35/seed42/paper/sketch/CM_1068.png" width="140"> |
+| **CM_1067 (unbraid)** | <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch/CM_1067.png" width="140"> | <img src="../outputs/0725_phase2/epoch35/seed42/paper/sketch/CM_1067.png" width="140"> |
+| **CM_1172 (unbraid)** | <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch/CM_1172.png" width="140"> | <img src="../outputs/0725_phase2/epoch35/seed42/paper/sketch/CM_1172.png" width="140"> |
+| **braid_4156 (braid)** | <img src="../outputs/0725_phase1/epoch40/seed42/unbraid_new/sketch/braid_4156.png" width="140"> | <img src="../outputs/0725_phase2/epoch35/seed42/unbraid_new/sketch/braid_4156.png" width="140"> |
+| **braid_4276 (braid)** | <img src="../outputs/0725_phase1/epoch40/seed42/unbraid_new/sketch/braid_4276.png" width="140"> | <img src="../outputs/0725_phase2/epoch35/seed42/unbraid_new/sketch/braid_4276.png" width="140"> |
+| **wavy_753 (braid)** | <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch/wavy_753.png" width="140"> | <img src="../outputs/0725_phase2/epoch35/seed42/paper/sketch/wavy_753.png" width="140"> |
 
 > 전부 컬러(무지개) 스케치 입력 기준. unbraid: CM_1068, CM_1067, CM_1172 / braid: braid_4156, braid_4276, wavy_753 — phase1(edge loss 적용 전) 대비 phase2(edge loss 적용 후) ep35에서 braid 쪽 형태가 뚜렷해지고 unbraid 쪽이 푸석해지는지 확인용
 
