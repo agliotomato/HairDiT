@@ -53,7 +53,7 @@ mcs2 대비 여전히 색 반영이 약함 — stroke로 지정한 색을 제대
 
 **(1) 데모 무지개색은 학습 분포 밖(OOD).** 학습 파이프라인(`StrokeColorSampler`)은 매 iteration stroke를 GT 이미지의 실제 머리 픽셀 색으로 재착색함 — 모델이 배우는 "stroke 색 ↔ 머리색" 대응은 자연 머리색(갈색/검정/금발…) 범위뿐이고, 무지개색 재현은 순수 외삽임. 실제로 stroke를 자연색으로 바꿔주면(`--recolor_from_gt`) 현재 모델도 색을 정확히 따라감 — 색 대응 능력 자체는 살아 있고, 무너지는 건 분포 밖 외삽뿐임.
 
-**(2) mcs2가 그 외삽을 "잘했던" 이유 — prior가 꺼져 있었음.** mcs2는 frozen DiT에 timestep으로 raw σ(0~1)를 그대로 넘겨(7/15 수정 전), 사전학습된 시간 조건화(prior)가 사실상 무력화된 상태였음. ControlNet의 스케치 색 신호가 경쟁자 없이 출력을 지배했기 때문에 분포 밖 색도 저항 없이 통과했음. 7/15 timestep 정규화(σ×1000) 이후에는 SD3.5 prior가 정상 작동하며 "머리카락은 자연색"이라는 통계로 출력을 끌어당기는데, **inference 경로에는 CFG/guidance가 전혀 없어(단일 conditional pass) 이를 이길 장치가 없음** SD3.5는 원래 CFG 4~7을 전제로 설계된 모델임. 그 결과가 채도 저하와 stroke 간 색 번짐임.  
+**(2) mcs2가 그 외삽을 "잘했던" 이유 : prior가 꺼져 있었음.** mcs2는 frozen DiT에 timestep으로 raw σ(0~1)를 그대로 넘겨(7/15 수정 전), 사전학습된 시간 조건화(prior)가 사실상 무력화된 상태였음. ControlNet의 스케치 색 신호가 경쟁자 없이 출력을 지배했기 때문에 분포 밖 색도 저항 없이 통과했음. 7/15 timestep 정규화(σ×1000) 이후에는 SD3.5 prior가 정상 작동하며 "머리카락은 자연색"이라는 통계로 출력을 끌어당기는데, **inference 경로에는 CFG/guidance가 전혀 없어(단일 conditional pass) 이를 이길 장치가 없음** SD3.5는 원래 CFG 4~7을 전제로 설계된 모델임. 그 결과가 채도 저하와 stroke 간 색 번짐임.  
 => 밑에서 CFG inference 실험 진행
 
 **(3) loss 구조상 색을 방어할 항이 없음.** 색 학습의 사실상 유일한 동력은 flow(latent MSE)이고, LPIPS는 색 시프트에 둔감(질감·구조 위주)하며 색 전용 loss는 없음 — prior의 색 견인을 학습 신호가 상쇄해주지 못함.
