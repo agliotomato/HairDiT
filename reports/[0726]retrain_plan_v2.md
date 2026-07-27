@@ -112,13 +112,13 @@ epoch30→40 사이 거의 변화 없음(+0.4%, 이미 수렴) — 40epoch 학�
 | | phase1 ep20 | phase1 ep40 | phase2 ep10 | phase2 ep30 |
 |---|---|---|---|---|
 | **CM_1067 — 현재학습** | <img src="../outputs/0725_phase1/epoch20/seed42/paper/sketch_gt/CM_1067.png" width="90"> | <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch_gt/CM_1067.png" width="90"> | <img src="../outputs/0725_phase2/epoch10/seed42/paper/sketch_gt/CM_1067.png" width="90"> | <img src="../outputs/0725_phase2/epoch30/seed42/paper/sketch_gt/CM_1067.png" width="90"> |
-| **CM_1067 — 이전학습** | | | <img src="../outputs/results/joint_phase2_epoch10/sketch_gt/CM_1067.png" width="90"> | |
+| **CM_1067 — 이전학습** | <img src="../outputs/results/joint_phase1_epoch10/sketch_gt/CM_1067.png" width="90"> | <img src="../outputs/results/joint_phase1_epoch30/sketch_gt/CM_1067.png" width="90"> | <img src="../outputs/results/joint_phase2_epoch10/sketch_gt/CM_1067.png" width="90"> | <img src="../outputs/results/joint_phase2_epoch20/sketch_gt/CM_1067.png" width="90"> |
 | **CM_1082 — 현재학습** | <img src="../outputs/0725_phase1/epoch20/seed42/paper/sketch_gt/CM_1082.png" width="90"> | <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch_gt/CM_1082.png" width="90"> | <img src="../outputs/0725_phase2/epoch10/seed42/paper/sketch_gt/CM_1082.png" width="90"> | <img src="../outputs/0725_phase2/epoch30/seed42/paper/sketch_gt/CM_1082.png" width="90"> |
-| **CM_1082 — 이전학습** | | | <img src="../outputs/results/joint_phase2_epoch10/sketch_gt/CM_1082.png" width="90"> | |
+| **CM_1082 — 이전학습** | <img src="../outputs/results/joint_phase1_epoch10/sketch_gt/CM_1082.png" width="90"> | <img src="../outputs/results/joint_phase1_epoch30/sketch_gt/CM_1082.png" width="90"> | <img src="../outputs/results/joint_phase2_epoch10/sketch_gt/CM_1082.png" width="90"> | <img src="../outputs/results/joint_phase2_epoch20/sketch_gt/CM_1082.png" width="90"> |
 | **CM_1068 — 현재학습** | <img src="../outputs/0725_phase1/epoch20/seed42/paper/sketch/CM_1068.png" width="90"> | <img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch/CM_1068.png" width="90"> | <img src="../outputs/0725_phase2/epoch10/seed42/paper/sketch/CM_1068.png" width="90"> | <img src="../outputs/0725_phase2/epoch30/seed42/paper/sketch/CM_1068.png" width="90"> |
-| **CM_1068 — 이전학습** | | | <img src="../outputs/results/joint_phase2_epoch10/sketch/CM_1068.png" width="90"> | |
+| **CM_1068 — 이전학습** | <img src="../outputs/results/joint_phase1_epoch10/sketch/CM_1068.png" width="90"> | <img src="../outputs/results/joint_phase1_epoch30/sketch/CM_1068.png" width="90"> | <img src="../outputs/results/joint_phase2_epoch10/sketch/CM_1068.png" width="90"> | <img src="../outputs/results/joint_phase2_epoch20/sketch/CM_1068.png" width="90"> |
 
-> 이전학습(0720)은 phase1 epoch10/30, phase2 epoch5/10/15/20만 남아있어 phase1 ep20/ep40, phase2 ep30은 대응 결과물이 없음(비워둠) — phase2 ep10만 비교 가능
+> 이전학습(0720, `outputs/results/joint_*`)은 phase1 epoch10/30, phase2 epoch5/10/15/20만 남아있어 열 제목과 epoch이 정확히 일치하지 않음 — 이전학습 행은 순서대로 phase1 ep10 / phase1 ep30 / phase2 ep10 / phase2 ep20 렌더를 채움 (phase2 ep10 열만 현재학습과 동일 epoch 직접 비교 가능)
 
 **원인분석**
 scale-sync가 LPIPS 영향력을 정상 복원(R_lpips≈1.0)한 것 자체가 조건. 이전 학습은 flow 정규화 버그로 LPIPS gradient가 1.8%로 눌려있어 매끈했을 뿐, 지금은 LPIPS가 정상 작동하는데 §3.3.1의 `B_matte`(2절과 동일 원인)가 약해 그 디테일 압력이 자연스러운 머릿결로 못 가고 고주파 노이즈로 새어나온 것으로 추정 — 2절 색 회귀와 같은 뿌리. (1절의 edge loss 누수로 인한 unbraid 푸석함과는 별개의 더 근본적인 원인 — edge loss가 아예 적용되지 않는 phase1에서도 나타남)
