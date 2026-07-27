@@ -71,16 +71,12 @@ edge loss에 `is_braid` 마스크를 추가해 braid 서브셋 행만으로 평�
 **내용**
 mcs2 대비 여전히 색 반영이 약함 — 스트로크로 지정한 색을 제대로 못 따라감. 자연색(GT색) 스케치에서도 색이 확연히 흐리고, 다색(무지개) 스케치에서는 같은 약점이 더 뚜렷하게 드러남(스트로크별 지정색 구분 자체가 흐려짐). R_lpips 실측(phase1 1.016 / phase2 0.931, 목표 밴드 [0.8, 1.2])으로 scale-sync 정상 작동을 확인, loss 밸런스는 mcs2와 같게 맞췄기에 원인에서 배제.
 
-| | sketch | phase2 ep20 |
-|---|---|---|
-| **CM_1067 — 현재학습** | <img src="../data/paper/sketch/CM_1067.png" width="90"> | <img src="../outputs/0725_phase2/epoch20/seed42/paper/sketch/CM_1067.png" width="90"> |
-| **CM_1067 — mcs2** | | <img src="../outputs/figure/hair-dit_mcs2/color/CM_1067.png" width="90"> |
-| **CM_1121 — 현재학습** | <img src="../data/unbraid_new/sketch/CM_1121.png" width="90"> | <img src="../outputs/0725_phase2/epoch20/seed42/unbraid_new/sketch/CM_1121.png" width="90"> |
-| **CM_1121 — mcs2** | | <img src="../outputs/sup/bld/bld_on/mcs2/CM_1121.png" width="90"> |
-| **CM_1151 — 현재학습** | <img src="../data/unbraid_new/sketch/CM_1151.png" width="90"> | <img src="../outputs/0725_phase2/epoch20/seed42/unbraid_new/sketch/CM_1151.png" width="90"> |
-| **CM_1151 — mcs2** | | <img src="../outputs/sup/bld/bld_on/mcs2/CM_1151.png" width="90"> |
-| **wavy_749 — 현재학습** | <img src="../data/paper/sketch/wavy_749.png" width="90"> | <img src="../outputs/0725_phase2/epoch20/seed42/paper/sketch/wavy_749.png" width="90"> |
-| **wavy_749 — mcs2** | | <img src="../outputs/figure/hair-dit_mcs2/color/wavy_749.png" width="90"> |
+| | sketch | 현재학습 (phase2 ep20) | mcs2 |
+|---|---|---|---|
+| **CM_1067** | <img src="../data/paper/sketch/CM_1067.png" width="90"> | <img src="../outputs/0725_phase2/epoch20/seed42/paper/sketch/CM_1067.png" width="90"> | <img src="../outputs/figure/hair-dit_mcs2/color/CM_1067.png" width="90"> |
+| **CM_1121** | <img src="../data/unbraid_new/sketch/CM_1121.png" width="90"> | <img src="../outputs/0725_phase2/epoch20/seed42/unbraid_new/sketch/CM_1121.png" width="90"> | <img src="../outputs/sup/bld/bld_on/mcs2/CM_1121.png" width="90"> |
+| **CM_1151** | <img src="../data/unbraid_new/sketch/CM_1151.png" width="90"> | <img src="../outputs/0725_phase2/epoch20/seed42/unbraid_new/sketch/CM_1151.png" width="90"> | <img src="../outputs/sup/bld/bld_on/mcs2/CM_1151.png" width="90"> |
+| **wavy_749** | <img src="../data/paper/sketch/wavy_749.png" width="90"> | <img src="../outputs/0725_phase2/epoch20/seed42/paper/sketch/wavy_749.png" width="90"> | <img src="../outputs/figure/hair-dit_mcs2/color/wavy_749.png" width="90"> |
 
 > 전부 컬러(무지개) 스케치 입력 기준. CM_1067·wavy_749의 mcs2 렌더는 `outputs/figure/hair-dit_mcs2/color/`. **CM_1121·CM_1151은 mcs2의 "phase2 ep20" 시점 렌더가 따로 없어서(mcs2는 epoch별 저장이 안 남아있음) `outputs/sup/bld/bld_on/mcs2/`(BLD-on 설정) 렌더로 대체함 — 다른 두 이미지와 정확히 같은 조건(BLD 설정 등)인지 확인 안 됨, 참고용으로만 볼 것.**
 
