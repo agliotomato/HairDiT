@@ -81,6 +81,8 @@ mcs2(17ch, 마지막 블록 residual 없음, raw σ timestep)에는 없고 run2�
 
 ### a. 마지막 DiT 블록 residual 직행 통로
 
+**[검증 결과] hook만 제거하고 추론해봤는데 효과 없음.** run3 phase1 체크포인트(epoch10)로 `--no_last_block_hook` 추론을 돌려본 결과 기존(hook 있음) 렌더와 동일 — 방향 어긋남이 그대로 남음. 이 잔차 하나(`block_samples[11]`을 block23에 한 번 더 더하는 것)의 직접 기여가 그 시점 hidden_states 크기에 비해 무시할 만하다는 뜻으로, 이 좁은 의미의 이중 주입 자체가 노이즈의 주범일 가능성은 낮아짐 — 후보 우선순위가 내려감. 다만 이미 hook이 있는 채로 학습된 가중치에 대한 추론 시점 제거라, 학습 중 이 통로가 다른 가중치 형성에 영향을 줬을 가능성까지는 배제 못함 — 완전히 매듭지으려면 hook 없이 처음부터 재학습(§6 C)해야 함. 아래 서술은 이 배경에서 남은 후보로 유지함.
+
 diffusers 기본 forward는 `block_samples[11]`을 block22에 주입하고 마지막 block23엔 주입하지 않는데, 코드는 block23 출력에 **같은 `block_samples[11]`을 한 번 더** 더함. block23 뒤에는 `norm_out→proj_out→unpatchify`뿐이라 attention/MLP로 섞이는 과정 없이 **ControlNet residual이 토큰 단위 그대로 출력 latent 직전까지 직행**하는 통로가 생김. mcs2(17ch)에는 이 통로가 없음.
 
 LPIPS는 그레디언트가 가장 잘 통하는 경로를 따라가므로, 이 통로가 있으면 "자연스러운 결 방향으로 수렴" 대신 "이 통로를 통해 국소 고주파 텍스처를 직접 새겨 넣는" 지름길로 흡수될 유인이 됨.
@@ -118,7 +120,7 @@ mcs2는 raw σ(0~1)를 timestep으로 넘겨 모든 노이즈 레벨을 t≈0으
 
 ### 4-2. scale-sync — 배제
 
-run3 flow 항을 전개하면(`src/training/losses.py:66-70`, `243-245`) `run3 = Σ(m²·d²)/Σm × Σm/N = Σ(m²·d²)/N`이고, mcs2 구 정규화(`git show 0033de3`)는 `Σ(m·d²)/N` — **scale-sync 적용 후 전체 스케일이 같음.** 로그 실측 `s_raw`는 phase1 32.9~46.0, phase2 45.5~65.5로 clamp[20,120]에 한 번도 안 걸림. 남는 차이는 matte 가중이 `m`이냐 `m²`이냐는 국소적 차이뿐(`[0727]` §2-2와 동일 결론) — **scale-sync 자체는 원인이 아니라 mcs2와 스케일을 맞춘 조치**로 봐야 함.
+run3 flow 항을 전개하면(`src/training/losses.py:66-70`, `243-245`) `run3 = Σ(m²·d²)/Σm × Σm/N = Σ(m²·d²)/N`이고, mcs2 구 정규화(`git show 0033de3`)는 `Σ(m·d²)/N` — **scale-sync 적용 후 전체 스케일이 같음.** 로그 실측 `s_raw`는 phase1 32.9-46.0, phase2 45.5-65.5로 clamp[20,120]에 한 번도 안 걸림. 남는 차이는 matte 가중이 `m`이냐 `m²`이냐는 국소적 차이뿐(`[0727]` §2-2와 동일 결론) — **scale-sync 자체는 원인이 아니라 mcs2와 스케일을 맞춘 조치**로 봐야 함.
 
 ### 4-3. LPIPS(세기 자체) — 배제
 
@@ -140,7 +142,7 @@ mcs2는 `Σ(m·d²)`(선형 가중), 현재 코드는 `(m·d)² = m²·d²`(제�
 
 ## 5. 참고: run2 phase1 흐릿함의 별도 후보 (미확정)
 
-run2 phase1의 LPIPS 활성 스텝 수(epoch13~30, ≈6,375 step, `logs/run2_log.log`)는 run3 phase1(epoch13~40, ≈5,236 step)보다 짧지 않은데도 흐렸음 — "LPIPS 노출 부족" 설명은 이 수치로 반박됨. 남는 차이는 데이터셋: run2 phase1은 `both_aug3x`(unbraid 3000 + braid ±15° 회전증강 3000 = 6000, 375 step/epoch), run3 phase1은 unbraid 3000 단독(187 step/epoch). flow loss는 MSE 계열 회귀라, 회전 증강으로 target latent의 국소 방향 분산이 커지면 회귀가 여러 방향의 평균으로 수렴해 흐려지는 건 MSE형 손실에서 잘 알려진 성질(§3-a의 misalignment 기전과는 독립적인 별도 후보). 확정하려면 동일 아키텍처·스텝 수에서 `unbraid-only` vs `both_aug3x` 대조가 필요 — 이번 조사 범위에서는 **후보로만 기록**하며, §3의 노이지/어긋남 문제와는 별개임.
+run2 phase1의 LPIPS 활성 스텝 수(epoch13-30, ≈6,375 step, `logs/run2_log.log`)는 run3 phase1(epoch13-40, ≈5,236 step)보다 짧지 않은데도 흐렸음 — "LPIPS 노출 부족" 설명은 이 수치로 반박됨. 남는 차이는 데이터셋: run2 phase1은 `both_aug3x`(unbraid 3000 + braid ±15° 회전증강 3000 = 6000, 375 step/epoch), run3 phase1은 unbraid 3000 단독(187 step/epoch). flow loss는 MSE 계열 회귀라, 회전 증강으로 target latent의 국소 방향 분산이 커지면 회귀가 여러 방향의 평균으로 수렴해 흐려지는 건 MSE형 손실에서 잘 알려진 성질(§3-a의 misalignment 기전과는 독립적인 별도 후보). 확정하려면 동일 아키텍처·스텝 수에서 `unbraid-only` vs `both_aug3x` 대조가 필요 — 이번 조사 범위에서는 **후보로만 기록**하며, §3의 노이지/어긋남 문제와는 별개임.
 
 ---
 
@@ -148,12 +150,10 @@ run2 phase1의 LPIPS 활성 스텝 수(epoch13~30, ≈6,375 step, `logs/run2_log
 
 | | 방법 | 비용 | 판정 대상 |
 |---|---|---|---|
-| A | 기존 run3 체크포인트를 hook 없는(diffusers 기본) forward로 추론 | 무비용 | §3-a — 질감이 정리되면 유력 후보로 승격 |
-| B | 추론 시 timestep에 raw σ 전달 | 무비용 | §3-b — mcs2식 결이 재현되면 유력 후보로 승격 |
 | C | phase1 짧은 재학습(10~15 epoch) — 마지막 블록 residual hook만 제거 | 저비용 | §3-a 독립 확정. `lpips_unbraid`/`edge_iou` 궤적 비교로 판정 |
 | D (부차) | 동일 아키텍처로 `unbraid-only` vs `both_aug3x` phase1을 같은 스텝 수에서 대조 | 저비용 | §5 — run2 phase1의 흐릿함이 misalignment와 독립된 데이터 요인인지 확정 |
 
-A·B는 학습·추론 조건이 달라 단독 결론엔 부족하지만 후보를 좁히는 덴 충분하며, **최종 확정은 C가 필요함**(flow 가중 지수는 §4-4에서 이미 배제되어 C에서 재테스트 불필요). D는 §5 확인용 부차 실험으로 C보다 우선순위 낮음.
+hook 제거 추론 테스트(§3-a)는 이미 실행 완료 — 효과 없어 후보 우선순위는 내려갔으나, 추론 시점 제거라 학습 중 영향까지는 배제 못해 **최종 확정은 C가 필요함**(flow 가중 지수는 §4-4에서 이미 배제되어 C에서 재테스트 불필요). D는 §5 확인용 부차 실험으로 C보다 우선순위 낮음.
 
 ---
 
