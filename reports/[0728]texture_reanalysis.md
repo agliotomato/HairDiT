@@ -1,14 +1,10 @@
 # [2026-07-28] 머릿결 방향 노이지(질감 방향성) 원인 분석
 
-> `analysis.md`가 던진 질문(run1은 안 노이지, run2는 phase2부터 노이지, run3는 phase1부터 노이지)에 대해, 코드·학습 로그·결과 이미지를 직접 대조해 독립적으로 원인을 도출함. `[0726]`/`[0727]` 리포트의 원인분석·해결방안은 참고하지 않음.
-
 ## 요약
 
 1. 문제를 색(§2, 이 리포트에서 다루지 않음)과 질감(본 주제)으로 분리.
 2. 질감 노이지 후보는 두 가지(§3): (a) 마지막 DiT 블록 직접 residual 통로, (b) timestep 정규화 수정(색 저하와 같은 뿌리). 둘 다 mcs2→run2 사이 변경이며 mcs2엔 없음.
 3. edge loss·scale-sync·LPIPS 세기·flow matte 가중 지수(m→m²)는 측정으로 배제(§4). matte 가중 지수는 m=1 내부 픽셀엔 영향이 없어 관찰된 "matte=1 내부에서도 어긋남"을 원리적으로 설명 못함.
-4. `logs/run2_log.log` 확보로 phase1→phase2 전환의 사실관계 확정(§3-a): phase1은 epoch31 도중 수동 종료·weights-only 로드였고, phase2는 warmup 없이 즉시 풀파워 LPIPS가 걸리는 "리셋 겸 부스트" 지점 — 잔차 통로 가설을 뒷받침함. run2 phase1의 흐릿함은 `both_aug3x` 회전증강에 의한 회귀-평균 효과로, §3과 독립된 별도 후보(§5)로 남음.
-5. 최종 확정은 재학습 기반 구분 실험 필요(§6) — 특히 마지막 블록 residual hook 제거 ablation.
 
 ---
 
@@ -16,11 +12,21 @@
 
 ### 1-1. run1/run2/run3 정의
 
-**run1(=mcs2)** — phase1 unbraid 3000(LR 1e-4) / phase2 braid 1000(LR 2e-5).
+**run1(=mcs2)**
+- dataset: phase1 unbraid 3000 / phase2 braid 1000
+- LR: phase1 1e-4 / phase2 2e-5
 
-**run2** — phase1 unbraid 3000+braid 증강 3000=6000(LR 1e-4) / phase2 동일 데이터(LR 1e-4). 논문 반영차 flow loss·matte 주입 구조 변경(상세 `[0713]training.md`). 문제점: phase2 진행할수록 색 재현·질감 저하(색 원인은 `[0726]`에서 별도 정리, 이 리포트에서 안 다룸).
+**run2**
+- dataset: phase1 unbraid 3000 + braid 증강 3000 = 6000 / phase2 동일 데이터
+- LR: phase1·2 모두 1e-4
+- 변경점: 논문 반영해 flow loss·matte 주입 구조 수정(`[0713]training.md`)
+- 문제점: phase2 진행할수록 색 재현·질감 저하(색 원인은 `[0726]`에서 별도 정리, 이 리포트에서 다루지 않음)
 
-**run3** — phase1 unbraid 3000(LR 1e-4) / phase2 replay(unbraid+braid 1000+1000, LR 5e-6). run2 문제 개선 목적(상세 `[0723]retrain_plan.md`). 문제점: mcs2 대비 색 학습 저조(§2에서 배제) + phase1부터 내내 푸석함 — matte=1 내부에서도 안 없어져 "머릿결 방향 노이지"로 재정의.
+**run3**
+- dataset: phase1 unbraid 3000 / phase2 replay(unbraid+braid 1000+1000)
+- LR: phase1 1e-4 / phase2 5e-6
+- 변경점: run2 문제 개선 목적(`[0723]retrain_plan.md`)
+- 문제점: mcs2 대비 색 학습 저조(§2에서 배제) + phase1부터 내내 푸석함 → matte=1 내부에서도 안 없어져 "머릿결 방향 노이지"로 재정의
 
 run3는 phase1·phase2 모두 노이지. run2는 phase1은 안 노이지하다가 phase2(epoch5~)부터 노이지. run1(mcs2)은 노이지 없음.
 
@@ -33,7 +39,7 @@ run3는 phase1·phase2 모두 노이지. run2는 phase1은 안 노이지하다�
 | phase1 실제 종료 | epoch 40 완주 | **epoch30**까지 진행 | epoch 40 완주 |
 | 결과 이미지 렌더 시점 | **phase2 완료 후**만 존재 | phase1/2 각 epoch 렌더 존재 | phase1/2 각 epoch 렌더 존재 |
 
-### 1-2. 이미지로 직접 재확인 — "정렬 유지"와 "설정이 옳음"은 다른 말
+### 1-2. 이미지로 직접 재확인
 
 동일 샘플(`CM_1067`)·동일 20-step 추론 조건으로 4개 시점을 비교했음.
 
@@ -61,15 +67,13 @@ run3는 phase1·phase2 모두 노이지. run2는 phase1은 안 노이지하다�
 <td><img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch_gt/CM_1067.png" width="150"></td></tr>
 </table>
 
-선명도와 정렬은 원래 독립적으로 움직일 이유가 없음. run2 phase1의 흐릿함은 §5의 별도 후보로, phase2의 선명+어긋남은 §3-a의 잔차 통로 가설로 각각 설명됨.
-
 ---
 
 ## 2. 문제 정의
 
 색 문제와 질감 문제는 서로 다른 결함이며, 이 리포트는 질감만 다룸.
 
-**색 반영 저하**: `HairLoss`(flow+lpips+edge) 어디에도 색을 직접 겨냥하는 항이 없다는 사실로 정의하고 더 다루지 않음 — 상세 원인·해결 논증은 `[0727]color_texture_reanalysis.md` §3.
+**색 반영 저하**: `HairLoss`(flow+lpips+edge) 어디에도 색을 직접 겨냥하는 항이 없음 + timestep을 정상화하며, prior 반영되면서 오히려 색 반영 저하 - `[0727]color_texture_reanalysis.md` §3.
 
 **머릿결 방향 노이지**: 가닥 결 방향이 스케치 의도와 다르게 헝클어지는 현상. 본 리포트의 주제이며, §3~§6에서 원인 후보를 좁힘.
 
@@ -81,9 +85,19 @@ mcs2(17ch, 마지막 블록 residual 없음, raw σ timestep)에는 없고 run2�
 
 ### a. 마지막 DiT 블록 residual 직행 통로
 
-**[검증 결과] hook만 제거하고 추론해봤는데 효과 없음.** run3 phase1 체크포인트(epoch10)로 `--no_last_block_hook` 추론을 돌려본 결과 기존(hook 있음) 렌더와 동일 — 방향 어긋남이 그대로 남음. 이 잔차 하나(`block_samples[11]`을 block23에 한 번 더 더하는 것)의 직접 기여가 그 시점 hidden_states 크기에 비해 무시할 만하다는 뜻으로, 이 좁은 의미의 이중 주입 자체가 노이즈의 주범일 가능성은 낮아짐 — 후보 우선순위가 내려감. 다만 이미 hook이 있는 채로 학습된 가중치에 대한 추론 시점 제거라, 학습 중 이 통로가 다른 가중치 형성에 영향을 줬을 가능성까지는 배제 못함 — 완전히 매듭지으려면 hook 없이 처음부터 재학습(§6 C)해야 함. 아래 서술은 이 배경에서 남은 후보로 유지함.
+**[검증 결과] 마지막 블록 residual 주입만 제거하고 추론해봤는데 효과 없음.**   
+run3 phase1 체크포인트(epoch10·epoch40)로 residual 주입 제거하고 추론을 돌려본 결과 기존(residual 주입 있음) 렌더와 동일 — 방향 어긋남이 그대로 남음(아래 비교). 이 residual 하나(`block_samples[11]`을 block23에 한 번 더 더하는 것)의 직접 기여가 그 시점 hidden_states 크기에 비해 무시할 만하다는 뜻으로, 이 좁은 의미의 residual 주입 자체가 노이즈의 주범일 가능성은 낮아짐 — 후보 우선순위가 내려감. 다만 이미 residual 주입이 있는 채로 학습된 가중치에 대한 추론 시점 제거라, 학습 중 이 통로가 다른 가중치 형성에 영향을 줬을 가능성까지는 배제 못함 — 완전히 매듭지으려면 residual 주입 없이 처음부터 재학습(§6 A)해야 함. 아래 서술은 이 배경에서 남은 후보로 유지
 
-diffusers 기본 forward는 `block_samples[11]`을 block22에 주입하고 마지막 block23엔 주입하지 않는데, 코드는 block23 출력에 **같은 `block_samples[11]`을 한 번 더** 더함. block23 뒤에는 `norm_out→proj_out→unpatchify`뿐이라 attention/MLP로 섞이는 과정 없이 **ControlNet residual이 토큰 단위 그대로 출력 latent 직전까지 직행**하는 통로가 생김. mcs2(17ch)에는 이 통로가 없음.
+<table>
+<tr><th></th><th>ep10 (residual 주입 있음)</th><th>ep10 (residual 주입 제거)</th><th>ep40 (residual 주입 있음)</th><th>ep40 (residual 주입 제거)</th></tr>
+<tr><th>CM_1067</th>
+<td><img src="../outputs/0725_phase1/epoch10/seed42/paper/sketch_gt/CM_1067.png" width="120"></td>
+<td><img src="../outputs/0728_texture_experiments/A_no_hook/epoch10/CM_1067.png" width="120"></td>
+<td><img src="../outputs/0725_phase1/epoch40/seed42/paper/sketch_gt/CM_1067.png" width="120"></td>
+<td><img src="../outputs/0728_texture_experiments/A_no_hook/epoch40/CM_1067.png" width="120"></td></tr>
+</table>
+
+diffusers 기본 forward는 `block_samples[11]`을 block22에 주입하고 마지막 block23엔 주입하지 않는데, 코드는 block23 출력에 `block_samples[11]`을 더함. block23 뒤에는 `norm_out→proj_out→unpatchify`뿐이라 attention/MLP로 섞이는 과정 없이 **ControlNet residual이 토큰 단위 그대로 출력 latent 직전까지 직행**하는 통로가 생김.(논문 반영) mcs2(17ch)에는 이 통로가 없음.
 
 LPIPS는 그레디언트가 가장 잘 통하는 경로를 따라가므로, 이 통로가 있으면 "자연스러운 결 방향으로 수렴" 대신 "이 통로를 통해 국소 고주파 텍스처를 직접 새겨 넣는" 지름길로 흡수될 유인이 됨.
 
@@ -98,17 +112,16 @@ LPIPS는 그레디언트가 가장 잘 통하는 경로를 따라가므로, 이 
 | 33 | 0.3814 | 0.0779 | 8.39 |
 | 39 | 0.3945 | 0.0835 | 8.29 |
 
-epoch22 이후 `lpips_unbraid`는 **+10.6% 악화**되는 동안 `edge_iou_braid`는 **+27.5% 증가**, `dE_unbraid`(색)는 계속 개선됨 — 학습이 덜 된 게 아니라 **LPIPS가 걸린 채 계속 학습할수록 도달하는 수렴점 자체가 노이지한 방향**임을 뜻함. phase2 후반(epoch27~35)은 `lpips_unbraid`·`dE_unbraid` 모두 완전히 정체(더 돌려도 안 나아짐).
+epoch22 이후 `lpips_unbraid`는 **+10.6% 악화**되는 동안 `edge_iou_braid`는 **+27.5% 증가**, `dE_unbraid`(색)는 계속 개선됨 — 학습이 덜 된 게 아니라 **LPIPS가 걸린 채 계속 학습할수록 도달하는 수렴점 자체가 노이지한 방향**임을 뜻함. phase2 후반(epoch27~35)은 `lpips_unbraid`·`dE_unbraid` 모두 완전히 정체(더 돌려도 안 나아짐). 다만 이 추세는 "계속 학습할수록 노이지해진다"는 상관관계일 뿐, 원인이 정확히 마지막 블록의 residual 주입 때문이라는 직접 증거는 아님 — 위 [검증 결과]처럼 다른 메커니즘일 가능성도 있는 가설 수준.
 
-**증거 2 — `logs/run2_log.log`: phase1→phase2 전환이 이 통로를 급격히 키우는 조건임.** 이전 판까지는 run2 로그가 없어 phase2 구간이 미해결이었으나, `logs/run2_log.log`(39,517줄) 확보로 아래가 확정됨(phase2 중 CUDA 크래시가 1회 있었으나 EMA·optimizer·lr_scheduler까지 완전 복원되어 관측에 영향 없음).
+**증거 2 — run2의 phase1→phase2 전환이 이 통로를 급격히 키우는 조건으로 보임(단, 아래 반례 있음).**
+run2는 phase1에서도 이미 LPIPS가 켜져 있었음(`logs/run2_log.log`: `loss_lpips`가 `Epoch 13/40`부터 등장, 9109줄) — 그런데도 phase1 내내(epoch13~30) 방향은 정렬 유지(§1-2). phase2로 넘어가는 순간 LR이 cosine 감쇠로 낮아져 있던 값(≈1e-6대)에서 1.0e-4로 재부팅되고 옵티마이저(momentum)도 초기화되는데, LPIPS는 이미 켜진 채로 곧바로 다시 걸림 — "이미 활성인 LPIPS + 방금 리셋된 고LR"이라는 조합이 phase1 30epoch 동안 한 번도 없던 상황으로 처음 발생함. 이 통로가 LPIPS 그레디언트에 가장 민감한 지름길이라면, 이 리셋 순간부터 급격히 활성화되는 쪽이 "ep5부터 이미 선명+어긋남"이라는 관찰과 잘 맞음.
 
-phase1은 정상 종료가 아니라 epoch30 체크포인트 저장 후 epoch31 도중 수동 종료됐고, phase1→phase2 전환은 weights-only 로드였음 — 옵티마이저 상태가 이어지지 않고 재초기화됨. 게다가 phase2는 warmup 없이 첫 스텝부터 LPIPS가 풀파워로 걸림(`Epoch 1/40` 첫 스텝부터 `loss_lpips=0.1757`, 22727줄; phase1은 `lpips_warmup_frac=0.3×15000 step≈epoch13`부터 활성화, 9109줄). 전환 순간 모델은 ① cosine 감쇠로 낮아진 LR(≈1e-6대)에서 1.0e-4로 재부팅 ② 이미 흐릿하게 수렴한 체크포인트(§1-2) ③ warmup 없이 즉시 최대 강도 LPIPS, 이 세 조건을 동시에 처음 맞음.
-
-이 통로가 LPIPS 그레디언트에 가장 민감한 지름길이라면, fresh 고LR + 즉시 풀파워 LPIPS를 만나는 순간부터 급격히 활성화되는 쪽이 "ep5부터 이미 선명+어긋남"이라는 관찰과 잘 맞음. run3 phase1(처음부터 같은 조건으로 시작하는 from-scratch 학습)이 같은 궤적을 보인 것과 합쳐보면, "선명+어긋남"은 특정 epoch가 쌓여야 나오는 게 아니라 **"1e-4대 LR + 활성 LPIPS + 32ch/hook 아키텍처"가 동시에 갖춰지는 순간 유도되는 수렴 방향**이라는 해석이 이 가설을 뒷받침함.
+**반례 — run3 phase1은 이 가설과 안 맞음.** run3 phase1은 LR 리셋 없이 처음부터 1e-4로 시작하고 LPIPS는 워밍업을 거쳐 epoch12부터 켜지는데(증거1), §1-2 표에서는 **LPIPS 활성 전인 ep10에 이미 방향이 어긋나 있음.** LPIPS가 걸리기도 전에 어긋남이 나타난다는 건 "LPIPS 그레디언트가 이 통로를 통해 어긋남을 만든다"는 메커니즘으로는 설명이 안 되는 관찰임 — 이 통로 가설은 run2 쪽 증거만으로는 완전히 뒷받침되지 않고, run3 phase1의 조기 어긋남은 별도 원인(§3-b, 또는 미확인 요인)으로 설명돼야 할 반례로 남음.
 
 ### b. timestep 정규화 수정 — 색 저하와 같은 뿌리
 
-mcs2는 raw σ(0~1)를 timestep으로 넘겨 모든 노이즈 레벨을 t≈0으로 인식시킴 → SD3.5 prior가 사실상 무력화된 채 ControlNet residual이 생성을 지배(`[0727]` §3-2). run2/run3는 `timesteps_1d = sigmas × num_train_timesteps`(`src/training/trainer.py:608, 746`)로 정규화해 prior가 정상 작동함. prior가 살아나면 SD3.5의 자연 이미지 고주파 사전지식이 sketch stroke의 결 방향과 경쟁하게 됨 — 색 문제(`[0727]` §3)와 같은 메커니즘이 질감에도 적용될 수 있는 후보. run3 phase1 ep10 이미지가 색은 거의 없이 SD3.5가 그릴 법한 자연스러운 웨이브에 가깝다는 관찰이 이 해석과 부합함.
+mcs2는 raw σ(0~1)를 timestep으로 넘겨 모든 노이즈 레벨을 t≈0으로 인식시킴 → SD3.5 prior가 사실상 무력화된 채 ControlNet residual이 생성을 지배(`[0726]` §3-2). run2/run3는 `timesteps_1d = sigmas × num_train_timesteps`로 정규화해 prior가 정상 작동함. prior가 살아나면 SD3.5의 자연 이미지 고주파 사전지식이 sketch stroke의 결 방향과 경쟁하게 됨 — 색 문제(`[0726]` §3)와 같은 메커니즘이 질감에도 적용될 수 있는 후보. 
 
 ---
 
@@ -124,7 +137,7 @@ run3 flow 항을 전개하면(`src/training/losses.py:66-70`, `243-245`) `run3 =
 
 ### 4-3. LPIPS(세기 자체) — 배제
 
-mcs2 phase1(`0033de3`)과 run3 phase1(`e623ab0`)은 데이터(unbraid 3000)·batch(16)·step/epoch(187)·epochs(40)·LR(1e-4)·loss 가중치(flow 1.0/lpips 0.1/warmup 0.3/edge 0.0)가 전부 동일함. 남는 차이만 대조하면:
+mcs2 phase1과 run3 phase1은 데이터(unbraid 3000)·batch(16)·step/epoch(187)·epochs(40)·LR(1e-4)·loss 가중치(flow 1.0/lpips 0.1/warmup 0.3/edge 0.0)가 전부 동일함. 남는 차이만 대조하면:
 
 | | mcs2 phase1 | run3 phase1 |
 |---|---|---|
@@ -142,7 +155,7 @@ mcs2는 `Σ(m·d²)`(선형 가중), 현재 코드는 `(m·d)² = m²·d²`(제�
 
 ## 5. 참고: run2 phase1 흐릿함의 별도 후보 (미확정)
 
-run2 phase1의 LPIPS 활성 스텝 수(epoch13-30, ≈6,375 step, `logs/run2_log.log`)는 run3 phase1(epoch13-40, ≈5,236 step)보다 짧지 않은데도 흐렸음 — "LPIPS 노출 부족" 설명은 이 수치로 반박됨. 남는 차이는 데이터셋: run2 phase1은 `both_aug3x`(unbraid 3000 + braid ±15° 회전증강 3000 = 6000, 375 step/epoch), run3 phase1은 unbraid 3000 단독(187 step/epoch). flow loss는 MSE 계열 회귀라, 회전 증강으로 target latent의 국소 방향 분산이 커지면 회귀가 여러 방향의 평균으로 수렴해 흐려지는 건 MSE형 손실에서 잘 알려진 성질(§3-a의 misalignment 기전과는 독립적인 별도 후보). 확정하려면 동일 아키텍처·스텝 수에서 `unbraid-only` vs `both_aug3x` 대조가 필요 — 이번 조사 범위에서는 **후보로만 기록**하며, §3의 노이지/어긋남 문제와는 별개임.
+run2 phase1의 LPIPS 활성 스텝 수(epoch13-30, ≈6,375 step)는 run3 phase1(epoch13-40, ≈5,236 step)보다 짧지 않은데도 흐렸음 — "LPIPS 노출 부족" 설명은 이 수치로 반박됨. 남는 차이는 데이터셋: run2 phase1은 `both_aug3x`(unbraid 3000 + braid ±15° 회전증강 3000 = 6000, 375 step/epoch), run3 phase1은 unbraid 3000 단독(187 step/epoch). flow loss는 MSE 계열 회귀라, 회전 증강으로 target latent의 국소 방향 분산이 커지면 회귀가 여러 방향의 평균으로 수렴해 흐려지는 건 MSE형 손실에서 잘 알려진 성질(§3-a의 misalignment 기전과는 독립적인 별도 후보). 확정하려면 동일 아키텍처·스텝 수에서 `unbraid-only` vs `both_aug3x` 대조가 필요 — 이번 조사 범위에서는 **후보로만 기록**하며, §3의 노이지/어긋남 문제와는 별개임.
 
 ---
 
@@ -150,16 +163,15 @@ run2 phase1의 LPIPS 활성 스텝 수(epoch13-30, ≈6,375 step, `logs/run2_log
 
 | | 방법 | 비용 | 판정 대상 |
 |---|---|---|---|
-| C | phase1 짧은 재학습(10~15 epoch) — 마지막 블록 residual hook만 제거 | 저비용 | §3-a 독립 확정. `lpips_unbraid`/`edge_iou` 궤적 비교로 판정 |
-| D (부차) | 동일 아키텍처로 `unbraid-only` vs `both_aug3x` phase1을 같은 스텝 수에서 대조 | 저비용 | §5 — run2 phase1의 흐릿함이 misalignment와 독립된 데이터 요인인지 확정 |
+| A | phase1 짧은 재학습(10~15 epoch) — 마지막 블록 residual 주입만 제거 | 저비용 | §3-a 독립 확정. `lpips_unbraid`/`edge_iou` 궤적 비교로 판정 |
+| B (부차) | 동일 아키텍처로 `unbraid-only` vs `both_aug3x` phase1을 같은 스텝 수에서 대조 | 저비용 | §5 — run2 phase1의 흐릿함이 misalignment와 독립된 데이터 요인인지 확정 |
 
-hook 제거 추론 테스트(§3-a)는 이미 실행 완료 — 효과 없어 후보 우선순위는 내려갔으나, 추론 시점 제거라 학습 중 영향까지는 배제 못해 **최종 확정은 C가 필요함**(flow 가중 지수는 §4-4에서 이미 배제되어 C에서 재테스트 불필요). D는 §5 확인용 부차 실험으로 C보다 우선순위 낮음.
-
+마지막 블록 residual 주입 제거 추론 테스트(§3-a)는 이미 실행 완료 — 효과 없어 후보 우선순위는 내려갔으나, 추론 시점 제거라 학습 중 영향까지는 배제 못함
 ---
 
-## 7. Loss 재설계 — 착수 전 검토 항목 (색+방향 통합)
+## 7. Loss 재설계 계획 — 착수 전 검토 항목 (색+방향 통합)
 
-교수님 제안: §6의 hook ablation과는 별개로, 색과 방향(질감)을 loss 설계 단계에서 명시적으로 다루자는 방향. 아래는 최종 설계안이 아니라 **설계 착수 전에 확인·결정해야 할 항목**.
+§6의 마지막 블록 residual 주입 제거 실험과는 별개로, 색과 방향(질감)을 loss 설계 단계에서 명시적으로 다루는 방향. 아래는 최종 설계안이 아니라 **설계 착수 전에 확인·결정해야 할 항목**.
 
 ### 7-1. 색 항
 
@@ -176,13 +188,13 @@ hook 제거 추론 테스트(§3-a)는 이미 실행 완료 — 효과 없어 �
 
 ### 7-3. 색+방향 동시 도입 시 상호작용
 
-새 항의 그레디언트도 결국 §3-a의 마지막 블록 residual 통로를 거쳐 흐름. hook을 안 고친 채 loss만 추가하면 같은 통로로 또 다른 아티팩트가 새어나갈 수 있음 — §6의 hook ablation과 독립적으로 진행 가능하지만, 결과 해석 시 이 얽힘을 염두에 둬야 함.
+새 항의 그레디언트도 결국 §3-a의 마지막 블록 residual 통로를 거쳐 흐름. residual 주입 구조를 안 고친 채 loss만 추가하면 같은 통로로 또 다른 아티팩트가 새어나갈 수 있음 — §6의 residual 주입 제거 실험과 독립적으로 진행 가능하지만, 결과 해석 시 이 얽힘을 염두에 둬야 함.
 
 ### 7-4. 검증 순서
 
 - **재학습 없이 먼저 되는 것**: 기존 체크포인트에 색/방향 지표만 계산해 현재 실패 정도를 정량화(§4-3에서 LPIPS 배제할 때 쓴 방식과 동일 — 무비용).
 - **재학습이 필요한 것**: 새 loss 항을 실제로 넣어 수렴 여부·`lpips_unbraid`/`edge_iou` 궤적 변화 확인.
-- §6과의 순서·병행 여부 결정 필요 — 특히 hook ablation(C) 결과가 방향 항의 필요 여부·우선순위에 영향을 줄 수 있음.
+- §6과의 순서·병행 여부 결정 필요 — 특히 residual 주입 제거 실험(A) 결과가 방향 항의 필요 여부·우선순위에 영향을 줄 수 있음.
 
 ### 7-5. 선행연구 조사 필요 항목
 
