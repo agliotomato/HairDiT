@@ -51,9 +51,9 @@ mcs2 대비 여전히 색 반영이 약함 — stroke로 지정한 색을 제대
 
 **원인분석**
 
-**(1) 데모 무지개색은 학습 분포 밖(OOD).** 학습 파이프라인(`StrokeColorSampler`)은 매 iteration stroke를 GT 이미지의 실제 머리 픽셀 색으로 재착색함 — 모델이 배우는 "stroke 색 ↔ 머리색" 대응은 자연 머리색(갈색/검정/금발…) 범위뿐이고, 무지개색 재현은 순수 외삽임. 실제로 stroke를 자연색으로 바꿔주면(`--recolor_from_gt`) 현재 모델도 색을 정확히 따라감 — 색 대응 능력 자체는 살아 있고, 무너지는 건 분포 밖 외삽뿐임.
+**(1) 데모 무지개색은 학습 분포 밖(OOD).** 학습 파이프라인(`StrokeColorSampler`)은 매 iteration stroke를 GT 이미지의 실제 머리 픽셀 색으로 재착색함 — 모델이 배우는 "stroke 색 ↔ 머리색" 대응은 자연 머리색(갈색/검정/금발…) 범위뿐이고, 무지개색 재현은 순수 extrapolation(학습 범위 밖 추정)임. 실제로 stroke를 자연색으로 바꿔주면(`--recolor_from_gt`) 현재 모델도 색을 정확히 따라감 — 색 대응 능력 자체는 살아 있고, 무너지는 건 분포 밖 extrapolation뿐임.
 
-**(2) mcs2가 그 외삽을 "잘했던" 이유 : prior가 꺼져 있었음.** mcs2는 frozen DiT에 timestep으로 raw σ(0~1)를 그대로 넘겨(7/15 수정 전), 사전학습된 시간 조건화(prior)가 사실상 무력화된 상태였음. ControlNet의 스케치 색 신호가 경쟁자 없이 출력을 지배했기 때문에 분포 밖 색도 저항 없이 통과했음. 7/15 timestep 정규화(σ×1000) 이후에는 SD3.5 prior가 정상 작동하며 "머리카락은 자연색"이라는 통계로 출력을 끌어당기는데, **inference 경로에는 CFG/guidance가 전혀 없어(단일 conditional pass) 이를 이길 장치가 없음** SD3.5는 원래 CFG 4~7을 전제로 설계된 모델임. 그 결과가 채도 저하와 stroke 간 색 번짐임.  
+**(2) mcs2가 그 extrapolation을 "잘했던" 이유 : prior가 꺼져 있었음.** mcs2는 frozen DiT에 timestep으로 raw σ(0~1)를 그대로 넘겨(7/15 수정 전), 사전학습된 시간 조건화(prior)가 사실상 무력화된 상태였음. ControlNet의 스케치 색 신호가 경쟁자 없이 출력을 지배했기 때문에 분포 밖 색도 저항 없이 통과했음. 7/15 timestep 정규화(σ×1000) 이후에는 SD3.5 prior가 정상 작동하며 "머리카락은 자연색"이라는 통계로 출력을 끌어당기는데, **inference 경로에는 CFG/guidance가 전혀 없어(단일 conditional pass) 이를 이길 장치가 없음** SD3.5는 원래 CFG 4~7을 전제로 설계된 모델임. 그 결과가 채도 저하와 stroke 간 색 번짐임.  
 => 밑에서 CFG inference 실험 진행
 
 **(3) loss 구조상 색을 방어할 항이 없음.** 색 학습의 사실상 유일한 동력은 flow(latent MSE)이고, LPIPS는 색 시프트에 둔감(질감·구조 위주)하며 색 전용 loss는 없음 — prior의 색 견인을 학습 신호가 상쇄해주지 못함.
@@ -71,7 +71,7 @@ mcs2 대비 여전히 색 반영이 약함 — stroke로 지정한 색을 제대
 | wavy_749 | 18.40 | 23.16 |
 | **평균** | **15.18** | **17.98** |
 
-7장 전부에서 mcs2가 더 정확함(평균 15.2 vs 18.0). 동시에 mcs2도 ΔE 11~19로 완벽과는 거리가 있음 — 무지개 외삽의 본질적 한계는 mcs2에도 있었고, 차이는 정도 문제임.
+7장 전부에서 mcs2가 더 정확함(평균 15.2 vs 18.0). 동시에 mcs2도 ΔE 11~19로 완벽과는 거리가 있음 — 무지개 extrapolation의 본질적 한계는 mcs2에도 있었고, 차이는 정도 문제임.
 
 **인과 검증 (재학습 없이)** — inference에 CFG를 추가하면(`v = v_uncond + g·(v_cond − v_uncond)`, uncond는 ControlNet residual 없는 순수 prior 패스) 일부 이미지에서 채도와 stroke 색 분리가 회복됨 — guidance가 색에 영향을 주는 레버라는 증거. 단 아래처럼 이미지마다 방향이 다름. `data/paper/` 9장 전체(phase2 ep35 + 매 스텝 BLD + pixel blend 0.75 합성, g=1.0은 기존 파이프라인과 동일 조건, 픽셀 단위 일치 확인) 중 대표 사례:
 
