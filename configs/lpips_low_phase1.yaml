@@ -1,0 +1,66 @@
+# configs/lpips_low_phase1.yaml — Run A: LPIPS 실효 세기를 run2 수준으로 되돌린 phase1 재학습
+# 근거: reports/[0729]retrain_plan_v2.md
+#
+# 목적: 머릿결 방향 어긋남의 원인이 LPIPS 실효 세기 R인지 변수 1개로 확정.
+# 대조군은 run3 phase1(=configs/scale_sync_phase1.yaml, 렌더 outputs/0725_phase1/)을 그대로 재사용하므로
+# 아래 두 항목 외에는 scale_sync_phase1.yaml과 완전히 동일하게 유지해야 한다.
+#   ① lpips: 0.1 → 0.002   (R ≈ 1.02 → 0.02, run2 수준)
+#   ② flow matte 가중 m² → m 복원  ← config가 아니라 src/training/losses.py에서 직접 수정됨
+#      (FlowMatchingLoss.forward — 이제 분자가 Σ(m·d²). run3 재현이 필요하면 그 코드를 되돌려야 함)
+base: configs/base.yaml
+
+# 아래 model 블록은 현재 trainer 기본값과 값이 같지만(trainer.py:224-229), run3와의 아키텍처 동일성이
+# 이 실험의 전제이므로 기본값에 의존하지 않고 명시한다(32ch = 16 latent + 16 raw anchor).
+model:
+  zero_matte_cond: false
+  zero_matte_feat: false
+  zero_raw_matte: false
+  num_extra_conditioning_channels: 16
+  matte_bias_zero_init: true
+  use_matte_scale: true
+
+training:
+  phase: pretrain            # edge off, LPIPS warmup (edge는 finetune에서만 켜짐)
+  dataset: unbraid           # unbraid 3000 → 187 step/epoch (run3 phase1과 동일)
+  epochs: 40                 # ⚠️ 줄이지 말 것: LPIPS 활성 시점(= lpips_warmup_frac × epochs × step/ep)과
+                             #    cosine LR T_max가 이 값에 묶여 있음(trainer.py:393-403).
+                             #    15~20 epoch에서 "수동 중단"할 것 — 값을 15로 바꾸면 LPIPS가 ep5에 켜지고
+                             #    LR 감쇠도 15 epoch로 압축돼 run3와의 1-변수 비교가 깨진다.
+  batch_size: 16             # 누락 금지(기본값 4) — s≈37 전제가 깨짐
+  learning_rate: 1.0e-4
+  warmup_steps: 500
+  mode: forward
+  schedule: all
+  gate_alpha: 1.0
+  resume: null
+
+  loss_weights:
+    flow: 1.0
+    lpips: 0.002              # ★ 유일한 config 변경점. R = 0.1 × (목표 R / 1.016) → 목표 0.02
+    edge: 0.0                 # pretrain
+    lpips_warmup_frac: 0.3    # → step 2244(≈epoch 12)부터 LPIPS 활성 (40 epoch 기준)
+    scale_sync: true          # 유지 — loss 절대 스케일·grad clip 거동을 run3와 동일하게 두기 위함
+    s_min: 20.0
+    s_max: 120.0
+    # flow matte 가중(m² → m)은 config 키가 아니라 src/training/losses.py의 FlowMatchingLoss에서
+    # 직접 수정됨 — 이 config로 돌리면 그 수정이 함께 적용된다.
+
+checkpointing:
+  output_dir: checkpoints/lpips_low_phase1/
+  eval_every: 10              # flow val (참고용) — run3 as-run과 동일(perceptual.log의 val_loss가 10 단위)
+  perceptual_every: 1         # perceptual val 매 epoch — 중단 판단 신호
+  save_every: 5               # run3 렌더 격자(10/15/20/…)와 일치시켜 같은 epoch끼리 비교.
+                              # 2로 좁히면 전환점을 더 정밀하게 잡을 수 있으나 저장 용량이 2.5배
+                              # (full ckpt ≈ optimizer+EMA 포함 20GB+, infer 6.1GB / 회) — 서버 여유 확인 후 결정.
+
+# ⚠️ 판정에 best.pth를 쓰지 말 것.
+#   trainer의 phase1 best 선정·조기종료 트리거는 모두 dE_unbraid(색) 기준이다(trainer.py:522-537).
+#   run3 실측에서 dE_unbraid는 40 epoch 내내 단조 개선(12.21→8.29)했고 질감 지표(lpips_unbraid)만
+#   epoch22 이후 악화됐다 → ① 조기종료는 발동하지 않으므로 lpips_unbraid를 보고 수동 중단해야 하고,
+#   ② best.pth는 "색이 가장 좋은(=질감이 가장 나쁠 수 있는) 후기 epoch"가 될 수 있으므로
+#   방향 정렬 판정은 epoch_N.pth로 해야 한다.
+
+# 착수 후 첫 확인 (reports/[0729]retrain_plan_v2.md §2-3 / §3):
+#   - LPIPS 활성 직후 R_lpips ∈ [0.015, 0.025]   (벗어나면 중단하고 lpips 값만 재조정)
+#   - s_raw 28~51, clamp_hi/clamp_lo 발동률 0%   (run3 phase1 실측 밴드)
+#   - 소요: 15 epoch ≈ 2.1h / 20 epoch ≈ 3.0h (+ 매 epoch perceptual val·체크포인트 저장)

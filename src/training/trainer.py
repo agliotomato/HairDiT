@@ -178,9 +178,9 @@ class Trainer:
         self.start_epoch   = 0
         self._current_epoch = 0
 
-        # perceptual val 조기종료 / 정점 ckpt 선정 상태 ([0724] planning §4-3)
+        # perceptual val 조기종료 상태 ([0724] planning §4-3)
+        # 정점 ckpt(best.pth) 선정은 제거됨 — train loop 주석 참고
         self._best_unbraid = float("inf")
-        self._best_select  = float("inf")
         self._patience     = 0
 
         self._restore_training_state()
@@ -530,22 +530,12 @@ class Trainer:
                 else:
                     self._patience = 0
 
-                # (2) 정점 ckpt 저장 — phase별 '채택 기준'으로 best.pth 직접 저장.
-                # save_every 격자와 무관하게 정점을 항상 보존한다.
-                if self.phase == "pretrain":                            # phase1: unbraid 품질이 목표
-                    if u < self._best_select - 1e-4:
-                        self._best_select = u
-                        self._save_checkpoint("best.pth")
-                else:                                                   # phase2: braid가 목표, unbraid 비악화 게이트
-                    b = pval["lpips_braid"]                             # ↓ 좋음 (edge_iou는 보조 확인)
-                    unbraid_ok = (u <= self._best_unbraid * 1.05)       # epoch-0 baseline 포함 최적 대비 5% 이내만 후보
-                    if unbraid_ok and b < self._best_select - 1e-4:
-                        self._best_select = b
-                        self._save_checkpoint("best.pth")
-                    # 게이트와 무관한 braid 최적도 참고용으로 별도 보존 (fallback 재료)
-                    if b < getattr(self, "_best_braid_any", float("inf")) - 1e-4:
-                        self._best_braid_any = b
-                        self._save_checkpoint("best_ungated.pth")
+                # 정점 ckpt(best.pth/best_ungated.pth) 자동 저장은 제거함.
+                # 선정 기준이 dE_unbraid(색)여서 질감 판정에는 오히려 오답을 고르고
+                # (run3에서 dE는 40 epoch 내내 개선되는데 lpips_unbraid만 ep22 이후 악화),
+                # 개선될 때마다 매 epoch 26GB(full 20GB+ / infer 6.1GB)를 쓰느라 시간도 크게 잡아먹었다.
+                # 채택은 epoch_{n}.pth와 매 epoch perceptual val 로그를 보고 사후에 수동으로 한다.
+                # (reports/[0729]retrain_plan_v2.md)
 
                 if self._patience >= 3:
                     self.accelerator.print(f"Early stop at epoch {epoch+1}")
@@ -557,12 +547,10 @@ class Trainer:
             if stop:
                 break
 
-        if self.phase == "finetune" and not (self.output_dir / "best.pth").exists():
-            self.accelerator.print(
-                "[WARNING] best.pth was never saved — unbraid non-degradation gate never "
-                "passed (forgetting too large). Check best_ungated.pth and epoch_*.pth for "
-                "manual selection (no automatic fallback)."
-            )
+        self.accelerator.print(
+            "Training finished. best.pth는 저장하지 않는다 — 채택 체크포인트는 "
+            f"{self.output_dir}/epoch_*.pth 중에서 perceptual val 로그를 보고 수동 선정할 것."
+        )
 
         self._save_checkpoint("final.pth")
         self.accelerator.end_training()

@@ -3,9 +3,11 @@ Flow matching losses for SD3.5 ControlNet hair generation.
 
 L_total = w_flow * (L_flow^eq12 / s_clamped) + w_lpips * L_lpips + w_edge * L_edge
 
-L_flow^eq12: masked flow matching loss (paper Eq. 12)
-  - L_flow = ||m̃ ⊙ (v_pred - v_target)||² / (||m̃||₁ + ε), v_target = noise - latents
+L_flow^eq12: masked flow matching loss (paper Eq. 12, matte 가중은 선형)
+  - L_flow = Σ(m̃ ⊙ (v_pred - v_target)²) / (||m̃||₁ + ε), v_target = noise - latents
   - 분모가 헤어 면적(matte L1)이라 헤어 영역 크기와 무관하게 샘플 기여가 균등
+  - matte 가중 지수는 LPIPS 마스킹(선형)과 일치시킴 — soft 경계에서만 어긋나던 감독 비율 교정
+    (reports/[0729]retrain_plan_v2.md §2-4)
   - matte 바깥 weight=0.0 (BLD: loss=0 outside matte)
   - scale-sync: s_raw = numel(v_pred) / (Σ matte_latent + eps), s = clamp(s_raw, s_min, s_max).
     matte에서만 계산되는 상수 배율(grad 없음) — flow 항에 1/s를 곱해 gradient 스케일을 맞춘다.
@@ -31,13 +33,19 @@ from src.models.vae_wrapper import VAEWrapper
 
 class FlowMatchingLoss(nn.Module):
     """
-    Masked flow matching loss — paper Eq. 12:
+    Masked flow matching loss — paper Eq. 12, matte 가중은 선형(m̃):
 
-        L_flow = ||m̃ ⊙ (v_pred - v_target)||² / (||m̃||₁ + ε)
+        L_flow = Σ(m̃ ⊙ (v_pred - v_target)²) / (||m̃||₁ + ε)
 
-    - 분자: matte를 차이에 곱한 뒤 제곱해 전 원소 합산 (soft 경계는 m̃² 가중)
+    - 분자: 차이를 먼저 제곱한 뒤 matte로 선형 가중한다. matte를 곱한 뒤 제곱하면
+      soft 경계가 m̃² 가중이 되는데, LPIPS 마스킹은 선형(pred·matte)이라 그 영역에서만
+      두 항의 감독 비율이 어긋난다 → 지수를 LPIPS와 일치시킨 것
+      (reports/[0729]retrain_plan_v2.md §2-4, [0727] §4-3).
+      m̃=1인 헤어 내부는 m̃²=m̃이라 이 선택의 영향을 받지 않는다.
     - 분모: matte L1 norm(= 헤어 면적) — 전체 텐서 크기(B·C·H·W)가 아니라
       헤어 영역 크기로 정규화하므로 작은 헤어 샘플도 기여가 깎이지 않는다.
+      HairLoss의 scale-sync(÷s)와 함께 쓰면 Σ(m̃·d²)/numel로 정리돼 mcs2의 구 정규화와
+      대수적으로 동일해진다(clamp 미발동 시).
     - outside_weight > 0 이면 m̃ 대신 [m̃ + w·(1-m̃)] 을 마스크로 사용 (기본 0.0 = 논문).
 
     v_target = noise - latents  (flow matching velocity)
@@ -66,8 +74,8 @@ class FlowMatchingLoss(nn.Module):
         weight = matte_latent + self.outside_weight * (1.0 - matte_latent)  # (B, 1, 64, 64)
 
         # bf16 대규모 합산 오차 방지를 위해 float32로 계산 (gradient는 그대로 흐름)
-        masked_diff = weight.float() * (v_pred.float() - v_target.float())  # (B, 16, 64, 64)
-        return masked_diff.pow(2).sum() / (weight.float().sum() + self.eps)
+        diff_sq = (v_pred.float() - v_target.float()).pow(2)                # (B, 16, 64, 64)
+        return (weight.float() * diff_sq).sum() / (weight.float().sum() + self.eps)
 
 
 class PerceptualLoss(nn.Module):
