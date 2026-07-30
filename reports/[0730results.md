@@ -66,9 +66,6 @@ run3에서 헤어가 뻣뻣하게 나오는 문제 해결 - lpips 영향 낮춘 
 
 ## 3. loss추이
 
-> `logs/lpips_low.log`·`logs/perceptual_lpips_low.log` 기준.
-> **로컬 로그가 ep24까지만 동기화돼 있어 ep25~40 구간은 미확인** (렌더는 ep40까지 있음).
-
 ### 3-1. 의도한 LPIPS 세기가 실제로 걸렸는지
 
 | 항목 | 목표 | 실측 |
