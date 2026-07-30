@@ -197,7 +197,8 @@ def run_sampling(
     controlnet, transformer, scheduler, schedule,
     sketch, matte, num_steps, device,
     vae=None, face=None, bld_mode="full", bld_soft_steps=None,
-    gate_alpha: float = 1.0,
+    gate_alpha: float = 1.0, bld_alpha: float = 1.0,
+    use_last_block_hook: bool = True, raw_sigma_timestep: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Euler sampling → (hair_latent, face_latent | None).
 
@@ -206,6 +207,14 @@ def run_sampling(
       final — 매 스텝 블렌딩 없이, 마지막 decode 직전 단 한 번만 latent에서 원본
               img(face)로 matte 바깥을 합성 (디코더 직전 합성).
       off   — 배경 블렌딩/합성 전부 없음 (face 무시, 생성 latent 그대로).
+    bld_alpha — 매 스텝 블렌딩(full/final 공통)의 전체 강도. 1.0=matte 그대로(기존 동작),
+                0.0=배경 고정 없음(bld_mode=off와 동일 효과). mask를 1 방향으로 선형 보간:
+                eff_mask = bld_alpha*mask + (1-bld_alpha).
+    use_last_block_hook — False면 마지막 DiT 블록에 block_samples[-1]을 한 번 더 더하는
+                           forward hook 없이 diffusers 기본 forward만 사용
+                           ([0728]texture_reanalysis.md §6-A).
+    raw_sigma_timestep — True면 모델에 넘기는 timestep을 sigma*num_train_timesteps 대신
+                          raw sigma(0~1)로 대체 (mcs2 방식 재현, §6-B).
     face_latent(x0_bg)는 인코딩한 배경 latent이며 composite_full에서 재사용된다.
     """
     scheduler.set_timesteps(num_steps, device=device)
@@ -226,8 +235,8 @@ def run_sampling(
     for i, t in enumerate(tqdm(scheduler.timesteps, desc="steps", leave=False)):
         sigmas_1d = scheduler.sigmas[i].to(device=device, dtype=torch.bfloat16).view(1)
         # 모델에 주는 timestep은 SD3.5 규약(= sigma*1000)인 scheduler.timesteps 값 t.
-        # sigma는 BLD 노이징에만 사용한다.
-        timesteps_1d = t.to(device=device).float().view(1)
+        # sigma는 BLD 노이징에 쓰고, raw_sigma_timestep=True면 모델 timestep도 이걸로 대체(mcs2 재현).
+        timesteps_1d = sigmas_1d.float() if raw_sigma_timestep else t.to(device=device).float().view(1)
 
         # BLD(full): matte 바깥을 face의 noised latent로 블렌딩.
         #   bld_soft_steps — 순수 배경(mask==0)은 매 스텝 계속, soft 경계(0<mask<1)는
@@ -237,6 +246,8 @@ def run_sampling(
             m = mask_lat
             if bld_soft_steps is not None and i >= bld_soft_steps:
                 m = (mask_lat > 1e-4).to(mask_lat.dtype)   # 경계는 keep(1), 순수배경만 복원
+            if bld_alpha != 1.0:
+                m = bld_alpha * m + (1.0 - bld_alpha)      # 강도 조절: 1.0=원본, 0.0=고정 없음
             latents = m * latents + (1.0 - m) * noised_bg
 
         block_samples, null_enc_hs, null_pooled = controlnet(
@@ -251,21 +262,24 @@ def run_sampling(
             block_samples = gate_block_samples(block_samples, matte_bf, schedule, gate_alpha=gate_alpha)
 
         v_pred = transformer_forward_full_residual(
-            transformer,
-            block_samples,
-            hidden_states=latents,
-            encoder_hidden_states=null_enc_hs.to(dtype=torch.bfloat16),
-            pooled_projections=null_pooled.to(dtype=torch.bfloat16),
-            timestep=timesteps_1d,
-            return_dict=False,
-        )[0]
+                transformer,
+                block_samples,
+                hidden_states=latents,
+                encoder_hidden_states=null_enc_hs.to(dtype=torch.bfloat16),
+                pooled_projections=null_pooled.to(dtype=torch.bfloat16),
+                timestep=timesteps_1d,
+                return_dict=False,
+            )[0]
 
         latents = scheduler.step(v_pred, t, latents, return_dict=False)[0]
 
     # final 모드에서만: 디코더 직전 단 한 번 matte 바깥을 노이즈 없는 source latent
     # x0_bg로 합성. full 모드는 매스텝 블렌딩만 하고 이 하드 고정은 하지 않는다.
     if do_bg and bld_mode == "final":
-        latents = mask_lat * latents + (1.0 - mask_lat) * x0_bg
+        m = mask_lat
+        if bld_alpha != 1.0:
+            m = bld_alpha * m + (1.0 - bld_alpha)
+        latents = m * latents + (1.0 - m) * x0_bg
 
     return latents, (x0_bg if do_bg else None)
 
@@ -364,6 +378,28 @@ def composite_full(
     return (vae.decode(hair_latent).float().clamp(-1, 1) + 1) / 2
 
 
+@torch.no_grad()
+def composite_pixel_blend(
+    vae,
+    hair_latent: torch.Tensor,
+    matte: torch.Tensor,
+    face: torch.Tensor,
+    device: torch.device,
+    alpha: float = 1.0,
+) -> torch.Tensor:
+    """VAE decode 후, 512x512 pixel space에서 matte로 hair/face를 합성 (decode 직후 pixel BLD).
+
+    alpha — 블렌딩 강도. 1.0=matte 그대로 합성(기존 동작), 0.0=합성 없음(순수 hair_img).
+            eff_matte = alpha*matte + (1-alpha) 로 matte를 1(=hair 유지) 방향으로 선형 보간.
+    """
+    hair_img = (vae.decode(hair_latent).float().clamp(-1, 1) + 1) / 2
+    matte_px = matte.to(device=device, dtype=hair_img.dtype)
+    face_px = face.to(device=device, dtype=hair_img.dtype)
+    if alpha != 1.0:
+        matte_px = alpha * matte_px + (1.0 - alpha)
+    return matte_px * hair_img + (1.0 - matte_px) * face_px
+
+
 # ---------------------------------------------------------------------------
 # Input collection
 # ---------------------------------------------------------------------------
@@ -444,6 +480,26 @@ def main():
     parser.add_argument("--bld_soft_steps", type=int, default=None,
                         help="순수 배경(mask==0)은 매 스텝, soft 경계(0<mask<1)만 앞 N 스텝만 "
                              "블렌딩 (이후 경계는 자유 생성).")
+    parser.add_argument("--pixel_blend", action="store_true",
+                        help="VAE decode 직후 512x512 pixel space에서 matte로 hair/face 합성 "
+                             "(bld_mode와 별도/병행 가능한 decode-후 compositing).")
+    parser.add_argument("--bld_alpha", type=float, default=1.0,
+                        help="매 스텝 latent 블렌딩(bld_mode full/final)의 강도. 1.0=matte 그대로"
+                             "(기존), 0.0=배경 고정 없음.")
+    parser.add_argument("--pixel_blend_alpha", type=float, default=1.0,
+                        help="--pixel_blend 사용 시 decode-후 합성 강도. 1.0=matte 그대로"
+                             "(기존), 0.0=합성 없음(순수 생성 이미지).")
+
+    parser.add_argument("--no_last_block_hook", action="store_true",
+                        help="[0728]texture_reanalysis.md §6-A: 마지막 DiT 블록 residual "
+                             "hook 없이 diffusers 기본 forward만 사용.")
+    parser.add_argument("--raw_sigma_timestep", action="store_true",
+                        help="[0728]texture_reanalysis.md §6-B: 모델 timestep을 sigma*1000 "
+                             "대신 raw sigma(0~1)로 대체 (mcs2 방식 재현).")
+    parser.add_argument("--zero_raw_matte", action="store_true",
+                        help="[0728]texture_reanalysis.md §7-3: RawMatteAnchor 출력(raw_anchor)을 "
+                             "0으로 꺼서 ctrl_cond에서 B_matte(MatteCNN)만 남긴다. config의 "
+                             "model.zero_raw_matte보다 우선.")
     parser.add_argument("--device",        default=None,
                         help="cuda / cpu (기본: cuda if available)")
     parser.add_argument("--seed",          type=int, default=None,
@@ -484,7 +540,7 @@ def main():
         local_files_only=local_files_only,
         zero_matte_cond=cfg["model"].get("zero_matte_cond", False),
         zero_matte_feat=cfg["model"].get("zero_matte_feat", False),
-        zero_raw_matte=cfg["model"].get("zero_raw_matte", False),
+        zero_raw_matte=(args.zero_raw_matte or cfg["model"].get("zero_raw_matte", False)),
         num_extra_conditioning_channels=cfg["model"].get("num_extra_conditioning_channels", 16),
         matte_bias_zero_init=cfg["model"].get("matte_bias_zero_init", True),
         use_matte_scale=cfg["model"].get("use_matte_scale", True),
@@ -544,11 +600,16 @@ def main():
             sketch, matte, args.num_steps, device,
             vae=vae, face=face, bld_mode=args.bld_mode,
             bld_soft_steps=args.bld_soft_steps,
-            gate_alpha=gate_alpha,
+            gate_alpha=gate_alpha, bld_alpha=args.bld_alpha,
+            use_last_block_hook=not args.no_last_block_hook,
+            raw_sigma_timestep=args.raw_sigma_timestep,
         )
 
         if face is not None:
-            result = composite_full(vae, hair_latent, matte, face, device, face_latent=face_latent_bld)
+            if args.pixel_blend:
+                result = composite_pixel_blend(vae, hair_latent, matte, face, device, alpha=args.pixel_blend_alpha)
+            else:
+                result = composite_full(vae, hair_latent, matte, face, device, face_latent=face_latent_bld)
         else:
             if face_file:
                 print(f"  [WARNING] face 없음: {face_file} → hair patch만 저장")
