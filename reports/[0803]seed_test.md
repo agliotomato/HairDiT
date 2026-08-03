@@ -1,13 +1,13 @@
-# Seed에 따른 Hair Directionality 비교
+# Seed에 따른 헤어 방향성 비교
 
 ## 0. 요약
-1. run2의 phase1에서 방향 노이즈 안나오는 건 seed고정이 안된 것이었음 seed42로 고정하니 방향 노이즈 나옴
+1. 기존에 보고했던 run2의 phase1에서 방향 노이즈 안나오는 건 seed고정이 안된 것이었음 seed42로 고정하니 방향 노이즈 나옴
 2. mcs2의 결과 다른 seed(1, 2, 3)에 대해 실험해봤을 때에도 이미지가 잘 나옴
 3. run2p1, run4에서 seed에 따라 방향성 불일치 정도가 달라짐
 
 ## 1. 목적
 
-Sparse한 hair stroke 조건에서 stroke 사이의 머리카락 방향은 모델의 prior에 의해 결정될 수 있으며, 이 과정이 random seed의 영향을 받는지 확인함.
+Sparse한 hair stroke 조건에서 stroke 사이의 머리카락 방향은 모델의 prior에 의해 결정될 수 있으며, 이 과정이 random seed의 영향을 받는지 확인
 
 ---
 
@@ -32,8 +32,8 @@ Sparse한 hair stroke 조건에서 stroke 사이의 머리카락 방향은 모�
 
 | ID | img (face) | matte | sketch (gt) |
 |---|---|---|---|
-| CM_1067 | <img src="../data/paper/img/CM_1067.png" width="110"> | <img src="../data/paper/matt/CM_1067.png" width="110"> | <img src="../data/paper/sketch_gt/CM_1067.png" width="110"> |
-| CM_1082 | <img src="../data/paper/img/CM_1082.png" width="110"> | <img src="../data/paper/matt/CM_1082.png" width="110"> | <img src="../data/paper/sketch_gt/CM_1082.png" width="110"> |
+| CM_1067 | <img src="../data/paper/img/CM_1067.png" width="130"> | <img src="../data/paper/matt/CM_1067.png" width="130"> | <img src="../data/paper/sketch_gt/CM_1067.png" width="130"> |
+| CM_1082 | <img src="../data/paper/img/CM_1082.png" width="130"> | <img src="../data/paper/matt/CM_1082.png" width="130"> | <img src="../data/paper/sketch_gt/CM_1082.png" width="130"> |
 
 ### 3.2 Inference
 
@@ -70,7 +70,7 @@ Sparse한 hair stroke 조건에서 stroke 사이의 머리카락 방향은 모�
 | 이미지 | epoch 10 | epoch 30 |
 |---|---|---|
 | seed42 | <img src="../outputs/0803/seed_run2_epoch10/42/CM_1067.png" width="180"> | <img src="../outputs/0803/seed_run2/42/CM_1067.png" width="180"> |
-| report 이미지 | <img src="../outputs/results/joint_phase1_epoch10/sketch_gt/CM_1067.png" width="130"> | <img src="../outputs/results/joint_phase1_epoch30/sketch_gt/CM_1067.png" width="130"> |
+| report 이미지 | <img src="../outputs/results/joint_phase1_epoch10/sketch_gt/CM_1067.png" width="180"> | <img src="../outputs/results/joint_phase1_epoch30/sketch_gt/CM_1067.png" width="180"> |
 
 ---
 
