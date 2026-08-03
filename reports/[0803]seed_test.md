@@ -65,12 +65,12 @@ Sparse한 hair stroke 조건에서 stroke 사이의 머리카락 방향은 모�
 
 ### 4.3 run2p1 epoch별 (seed 42)
 
-§4.1의 "epoch 10, 30 모두 하단에 노이즈" 근거. 두 epoch 모두 동일 조건으로 렌더함.
+§4.1의 "epoch 10, 30 모두 하단에 노이즈, 기존 보고 결과(매끄럽게 나옴)는 seed 42가 아닌 랜덤 시드로 돌린 것" 근거. 두 epoch 모두 동일 조건으로 렌더함.
 
 | 이미지 | epoch 10 | epoch 30 |
 |---|---|---|
-| CM_1067 | <img src="../outputs/0803/seed_run2_epoch10/42/CM_1067.png" width="180"> | <img src="../outputs/0803/seed_run2/42/CM_1067.png" width="180"> |
-| CM_1082 | <img src="../outputs/0803/seed_run2_epoch10/42/CM_1082.png" width="180"> | <img src="../outputs/0803/seed_run2/42/CM_1082.png" width="180"> |
+| seed42 | <img src="../outputs/0803/seed_run2_epoch10/42/CM_1067.png" width="180"> | <img src="../outputs/0803/seed_run2/42/CM_1067.png" width="180"> |
+| report 이미지 | <img src="../outputs/results/joint_phase1_epoch10/sketch_gt/CM_1067.png" width="130"> | <img src="../outputs/results/joint_phase1_epoch30/sketch_gt/CM_1067.png" width="130"> |
 
 ---
 
@@ -80,3 +80,26 @@ Sparse한 hair stroke 조건에서 stroke 사이의 머리카락 방향은 모�
 * stroke가 없는 중간 영역은 입력이 방향을 지정하지 못해 초기 noise와 모델 prior가 방향을 결정함 — seed 의존성이 여기서 나옴.
 * mcs2는 네 seed 모두 가닥 방향이 일관돼, 특정 seed에서만 좋은 결과가 나온 것으로 보기 어려움.
 * run4의 LPIPS 조정은 푸석거림을 개선했지만 방향성 문제는 seed에 따라 여전히 나타남.
+
+---
+
+## 6. 부록 — run4 seed 실험
+
+run4 phase1 epoch 30 seed별 이미지
+
+### 6.1 seed별 (gt sketch)
+
+| 이미지 | input sketch | Seed 42 | Seed 1 | Seed 2 | Seed 3 |
+|---|---|---|---|---|---|
+| CM_1027 | <img src="../data/test/sketch_gt/CM_1027.png" width="150"> | <img src="../outputs/0803/seed_run4/42/CM_1027.png" width="150"> | <img src="../outputs/0803/seed_run4/1/CM_1027.png" width="150"> | <img src="../outputs/0803/seed_run4/2/CM_1027.png" width="150"> | <img src="../outputs/0803/seed_run4/3/CM_1027.png" width="150"> |
+| CM_1033 | <img src="../data/test/sketch_gt/CM_1033.png" width="150"> | <img src="../outputs/0803/seed_run4/42/CM_1033.png" width="150"> | <img src="../outputs/0803/seed_run4/1/CM_1033.png" width="150"> | <img src="../outputs/0803/seed_run4/2/CM_1033.png" width="150"> | <img src="../outputs/0803/seed_run4/3/CM_1033.png" width="150"> |
+| CM_1084 | <img src="../data/test/sketch_gt/CM_1084.png" width="150"> | <img src="../outputs/0803/seed_run4/42/CM_1084.png" width="150"> | <img src="../outputs/0803/seed_run4/1/CM_1084.png" width="150"> | <img src="../outputs/0803/seed_run4/2/CM_1084.png" width="150"> | <img src="../outputs/0803/seed_run4/3/CM_1084.png" width="150"> |
+
+### 6.2 seed별 (colorful sketch)
+
+| 이미지 | input sketch | Seed 42 | Seed 1 | Seed 2 | Seed 3 |
+|---|---|---|---|---|---|
+| CM_1067 | <img src="../data/test/sketch/CM_1067.png" width="150"> | <img src="../outputs/0803/seed_run4_color/42/CM_1067.png" width="150"> | <img src="../outputs/0803/seed_run4_color/1/CM_1067.png" width="150"> | <img src="../outputs/0803/seed_run4_color/2/CM_1067.png" width="150"> | <img src="../outputs/0803/seed_run4_color/3/CM_1067.png" width="150"> |
+| CM_1068 | <img src="../data/test/sketch/CM_1068.png" width="150"> | <img src="../outputs/0803/seed_run4_color/42/CM_1068.png" width="150"> | <img src="../outputs/0803/seed_run4_color/1/CM_1068.png" width="150"> | <img src="../outputs/0803/seed_run4_color/2/CM_1068.png" width="150"> | <img src="../outputs/0803/seed_run4_color/3/CM_1068.png" width="150"> |
+| CM_1172 | <img src="../data/test/sketch/CM_1172.png" width="150"> | <img src="../outputs/0803/seed_run4_color/42/CM_1172.png" width="150"> | <img src="../outputs/0803/seed_run4_color/1/CM_1172.png" width="150"> | <img src="../outputs/0803/seed_run4_color/2/CM_1172.png" width="150"> | <img src="../outputs/0803/seed_run4_color/3/CM_1172.png" width="150"> |
+| CM_1027 | <img src="../data/test/sketch/CM_1027.png" width="150"> | <img src="../outputs/0803/seed_run4_color/42/CM_1027.png" width="150"> | <img src="../outputs/0803/seed_run4_color/1/CM_1027.png" width="150"> | <img src="../outputs/0803/seed_run4_color/2/CM_1027.png" width="150"> | <img src="../outputs/0803/seed_run4_color/3/CM_1027.png" width="150"> |
