@@ -74,7 +74,78 @@ Sparse한 hair stroke 조건에서 stroke 사이의 머리카락 방향은 모�
 
 ---
 
-## 5. 분석
+## 5. 정량 평가 — 방향 오차 (structure tensor)
+
+§4의 판정이 전부 육안이므로, 같은 이미지를 방향 지표로 다시 잰다. 구현·파라미터는
+`reports/2026-08-04-orientation-metric-implementation-guide.md` 를 그대로 따랐다.
+코드: [`scripts/eval/orientation_metric.py`](../scripts/eval/orientation_metric.py)
+
+### 5.1 방법
+
+국소 gradient 공분산(structure tensor)의 주고유벡터에 수직인 방향을 머릿결 방향 θ 로 잡고,
+GT 와 생성 결과의 θ 를 double-angle 로 비교해 평균 각도차를 낸다. 두 가지로 집계한다.
+
+| 지표 | 정의 | 무엇을 잡나 |
+|---|---|---|
+| **GT 오차** | 생성 결과 vs GT 의 평균 각도차 [deg] | 결이 GT 방향과 얼마나 어긋났나 |
+| **seed 불일치** | 같은 run 안에서 seed 쌍 6개의 평균 각도차 [deg] | 결 방향이 seed 따라 얼마나 달라지나 |
+
+파라미터: `σ_d=1.0`, `σ_i=3`, `erode_px=6`. `σ_i` 는 지침 §3 캘리브레이션(3/5/8 중 mcs2 와
+run4 seed42 의 오차가 가장 크게 벌어지는 값)으로 정했다 — gap 이 각각 +1.00 / +0.76 / +0.32°
+이므로 3. GT 는 hair 가 있는 원본을 썼다(bald 쓰면 안 됨).
+각도차는 coherence 로 가중해 GT 가 흐릿한 픽셀을 배제했고, matte 는 실루엣 gradient 오염을
+막으려 6px 침식했다.
+
+**지표 검증 (지침 §5, 표 만들기 전에 수행)** — 세 항목 모두 통과.
+
+| 검증 | 기대 | 실측 |
+|---|---|---|
+| GT vs GT | ~0° | **0.00°** (두 이미지) |
+| GT vs GT 를 90° 회전 | ~90° | **90.00°** (두 이미지) |
+| 방향=색상 / coherence=채도 시각화 | 결 방향 따라 색 띠 | 일치 — [outputs/0803/orientation/](../outputs/0803/orientation/) |
+
+### 5.2 결과
+
+**CM_1067**
+
+| 모델 | seed42 | seed1 | seed2 | seed3 | **GT 오차 평균±std** | coherence | **seed 불일치** |
+|---|---|---|---|---|---|---|---|
+| **mcs2** | 15.93 | 15.64 | 16.13 | 15.24 | **15.73 ± 0.38** | 0.748 | **10.12 ± 0.17** |
+| **run2p1** | 16.20 | 15.92 | 16.44 | 15.65 | 16.05 ± 0.34 | 0.754 | 13.10 ± 0.26 |
+| **run4** | 16.56 | 16.51 | 17.17 | 16.16 | 16.60 ± 0.42 | 0.751 | 14.41 ± 0.41 |
+
+**CM_1082**
+
+| 모델 | seed42 | seed1 | seed2 | seed3 | **GT 오차 평균±std** | coherence | **seed 불일치** |
+|---|---|---|---|---|---|---|---|
+| **mcs2** | 14.51 | 14.88 | 15.20 | 15.21 | **14.95 ± 0.33** | 0.796 | **9.72 ± 0.43** |
+| **run2p1** | 15.89 | 16.43 | 16.81 | 16.43 | 16.39 ± 0.38 | 0.755 | 13.70 ± 0.82 |
+| **run4** | 16.12 | 16.64 | 17.70 | 16.59 | 16.76 ± 0.67 | 0.758 | 14.34 ± 0.58 |
+
+* **GT 오차 평균**: 두 이미지 모두 mcs2 < run2p1 < run4. 이 순위는 `σ_i` 3/4/5/6/8 ×
+  `erode_px` 4/6/8 의 15개 조합 전부에서 동일해 파라미터에 의존하지 않는다.
+* **seed 불일치**: mcs2 가 32ch 계열보다 30~40% 낮다(9.7~10.1° vs 13.1~14.4°). 두 이미지에서
+  일관되고 seed 쌍 6개의 흔들림도 작다(±0.17~0.82). §0-2·§0-3 의 육안 결론이 그대로 재현된다.
+* **coherence 는 세 run 이 거의 같다**(0.748~0.796). 결의 선명도 차이가 아니라 **방향 차이**임을
+  뒷받침한다.
+
+### 5.3 지표의 한계 (해석 시 주의)
+
+* **절대값을 모델 정확도로 읽으면 안 된다.** GT 는 실사진이라 웨이브·레이어 겹침 때문에 국소
+  방향이 stroke 를 따라 일방적으로 흐르지 않는다. GT 자신의 스케일 간 방향 흔들림만 재도
+  CM_1067 10.24° / CM_1082 9.91° 로, **측정 오차의 62~64% 가 GT 자체의 복잡도**다. run 간
+  상대 비교로만 읽어야 한다.
+* **seed std 는 감도가 낮다.** run4 는 std 로 잡히지만(CM_1082 0.67 vs mcs2 0.33) run2p1 은
+  mcs2 와 구분되지 않는다. std 는 seed 별 오차 **크기**의 변동만 재기 때문에, 두 seed 가 서로
+  반대 방향으로 틀려도 같은 값이 나온다. §4.1 의 run2p1 seed42 하단 노이즈처럼 국소적인
+  결함은 hair 전체 평균에 희석되기도 한다. seed 불일치 지표는 방향 차이를 직접 재서 이
+  사각지대를 메우며, 실제로 run2p1 을 mcs2 와 분리해낸다.
+* 이미지 2장 × seed 4개라 표본이 작다. **단일 seed 판정은 하지 않는다.**
+* 판정용 지표이며 loss 로 학습에 넣지 않는다.
+
+---
+
+## 6. 분석
 
 * 동일한 입력과 체크포인트에서도 seed에 따라 stroke 사이에 생성되는 머리카락 방향이 달라짐. 단, 영향의 크기는 체크포인트별·이미지별로 다름.
 * stroke가 없는 중간 영역은 입력이 방향을 지정하지 못해 초기 noise와 모델 prior가 방향을 결정함 — seed 의존성이 여기서 나옴.
@@ -83,11 +154,11 @@ Sparse한 hair stroke 조건에서 stroke 사이의 머리카락 방향은 모�
 
 ---
 
-## 6. 부록 — run4 seed 실험
+## 7. 부록 — run4 seed 실험
 
 run4 phase1 epoch 30 seed별 이미지
 
-### 6.1 seed별 (gt sketch)
+### 7.1 seed별 (gt sketch)
 
 | 이미지 | input sketch | Seed 42 | Seed 1 | Seed 2 | Seed 3 |
 |---|---|---|---|---|---|
@@ -95,7 +166,7 @@ run4 phase1 epoch 30 seed별 이미지
 | CM_1033 | <img src="../data/test/sketch_gt/CM_1033.png" width="150"> | <img src="../outputs/0803/seed_run4/42/CM_1033.png" width="150"> | <img src="../outputs/0803/seed_run4/1/CM_1033.png" width="150"> | <img src="../outputs/0803/seed_run4/2/CM_1033.png" width="150"> | <img src="../outputs/0803/seed_run4/3/CM_1033.png" width="150"> |
 | CM_1084 | <img src="../data/test/sketch_gt/CM_1084.png" width="150"> | <img src="../outputs/0803/seed_run4/42/CM_1084.png" width="150"> | <img src="../outputs/0803/seed_run4/1/CM_1084.png" width="150"> | <img src="../outputs/0803/seed_run4/2/CM_1084.png" width="150"> | <img src="../outputs/0803/seed_run4/3/CM_1084.png" width="150"> |
 
-### 6.2 seed별 (colorful sketch)
+### 7.2 seed별 (colorful sketch)
 
 | 이미지 | input sketch | Seed 42 | Seed 1 | Seed 2 | Seed 3 |
 |---|---|---|---|---|---|
