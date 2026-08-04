@@ -19,34 +19,30 @@ sweep) 점들이 밀도축에서 서로 끼어들며 같은 곡선 위에 놓여
 
 ## 1. PI 피드백 반영 — SHS 공식 코드로 교체
 
-**배경**: 자체 구현(`[0804]densified_sketch.md` §1, K=25/15/11)은 SHS 논문 §5.3 서술만 보고
-재구현한 것이라, 실제 SHS가 공개한 `autocompletion/unbraid_completion.py`와 파라미터 의미가
-다름. 우리 `K`(dilation, L∞ 반경)와 SHS의 `threshold`(EDT, L2 거리)는 같은 숫자라도 강도가
-다르고, 최초 분석은 "SHS 기본값(threshold=15)이 우리 L1(K=25)보다도 약할 것"으로 예측.
+**배경**: 자체 구현(`[0804]densified_sketch.md` §1, K=25/15/11)은 SHS 논문 서술만 보고
+재구현한 것이라 SHS 공개 코드 `autocompletion/unbraid_completion.py`와 파라미터 의미가 다름 —
+우리 `K`(dilation, L∞ 반경)와 SHS `threshold`(EDT, L2 거리)는 같은 숫자라도 강도가 다르고,
+최초 예측은 "SHS 기본값(threshold=15)이 L1(K=25)보다 약할 것".
 
-**교체 원칙(PI 지시)**: SHS가 공개한 `getSketchCompletion()`을 그대로 쓰고, 하드코딩된
-`threshold = 15` 한 줄만 함수 인자로 빼는 것 외에는 수정하지 않음. SHS 코드는 이진 마스크만
-반환하므로(색 없음), 우리 sketch의 색이 헤어 색을 인코딩하는 부분에 한해 기존 색 전파
+**교체 원칙(PI 지시)**: `getSketchCompletion()`을 그대로 쓰고 하드코딩된 `threshold=15` 한
+줄만 함수 인자로 분리, 그 외 수정 금지. SHS 코드는 이진 마스크만 반환하므로 색 전파
 (`_propagate_color`) + blend(원본 우선)만 추가.
 
-**첫 sweep(threshold=15/12/9/6)에서 발견한 것**: PI 예측과 달리 SHS 기본값(threshold=15)의
-밀도(0.1224/0.1289)가 우리 L1(0.1194/0.1270)과 거의 같음 — 오히려 살짝 높음. 원인을 ablation으로
-진단(threshold=15 고정, CM_1067, `small_cc`만 변경):
+**첫 sweep(15/12/9/6)**: SHS 기본값(threshold=15) 밀도(0.1224/0.1289)가 L1(0.1194/0.1270)과
+거의 같음 — 예측과 반대. threshold=15 고정, `small_cc`만 바꿔 원인 진단(CM_1067):
 
 | small_cc | 의미 | new_density |
 |---|---|---|
-| 240 | SHS 코드 그대로(고정값) | 0.1224 |
-| 675 | 우리 L2(K=15)의 `3·K²` 상당 | 0.1173 |
-| 1875 | 우리 L1(K=25)의 `3·K²` 상당 | 0.1067 |
+| 240 | SHS 코드 그대로 | 0.1224 |
+| 675 | L2(K=15)의 `3K²` 상당 | 0.1173 |
+| 1875 | L1(K=25)의 `3K²` 상당 | 0.1067 |
 
-→ 버그가 아니라, SHS의 `small_cc=240`(고정)이 우리 `3K²` 기준(K=25에서 1875)보다 7.8배
-관대해 작은 조각을 더 많이 살려주는 효과가 "L2 거리 임계가 우리보다 약하다"는 효과를 상쇄한
-것 — PI가 정정 리포트 §2-2에서 이미 예견한 "두 효과가 상쇄하므로 계산이 아니라 측정해야
-한다"가 실측으로 확인됨. `small_cc`는 지시대로 SHS 값(240) 그대로 유지.
+→ 버그 아님. SHS `small_cc=240`이 우리 기준(K=25에서 1875)보다 7.8배 관대해 "거리 임계가
+약하다"는 효과를 상쇄 — PI가 §2-2에서 예견한 상쇄 효과가 실측 확인됨. `small_cc`는 SHS
+값(240) 유지.
 
-**sweep 확장**: L1보다 뚜렷이 약한 지점을 확보하기 위해 threshold를 18/21/24/27까지 넓힘
-(threshold가 클수록 gap 조건이 엄격해져 밀도가 낮아지는 방향). `small_cc`·`matte>230`·
-`skeletonize(method='lee')` 등 SHS 코드 내부는 전혀 건드리지 않고 threshold 값만 바꿈.
+**sweep 확장**: L1보다 약한 지점 확보를 위해 threshold를 18/21/24/27까지 확장(threshold↑ =
+밀도↓). `small_cc`·`matte>230`·`skeletonize(method='lee')` 등은 그대로.
 
 | threshold | CM_1067 밀도 | CM_1082 밀도 |
 |---|---|---|
@@ -54,18 +50,15 @@ sweep) 점들이 밀도축에서 서로 끼어들며 같은 곡선 위에 놓여
 | 24 | 0.0888 | 0.0924 |
 | 21 | 0.0976 | 0.1023 |
 | 18 | 0.1099 | 0.1181 |
-| **15(SHS 기본)** | 0.1224 | 0.1289 |
+| **15(기본)** | 0.1224 | 0.1289 |
 | 12 | 0.1400 | 0.1425 |
 | 9 | 0.1547 | 0.1528 |
 | 6 | 0.1621 | 0.1625 |
 
-(baseline을 SHS 코드의 matte 이진화 기준(`>230`)으로 재계산하면 0.0679/0.0728 — 자체 구현의
-`matte>127` 기준(0.0689/0.0737, `[0804]densified_sketch.md` §1.1)과 약 1.5% 차이. matte
-이진화 기준 차이에서 오는 것으로, 아래 §4 병합 표에서는 각 구현이 실제로 쓴 값을 그대로 표기함.)
+(baseline은 matte>230 기준 0.0679/0.0728 — 자체 구현의 matte>127 기준(0.0689/0.0737)과 약
+1.5% 차이. §4 병합 표는 각 구현 실측값을 그대로 사용.)
 
-시각화 검증(평행성·색 전파·잔가지·경계 유착, `[0804]densified_sketch.md` §1.2와 동일 체크리스트)도
-전 threshold 지점에서 통과 — 실루엣 인접 얇은 stroke는 같은 이유(원본 stroke가 실루엣보다
-안쪽에 위치)로 재확인.
+시각화 검증(`[0804]densified_sketch.md` §1.2 체크리스트)도 전 threshold 지점에서 통과.
 
 ---
 
@@ -86,6 +79,8 @@ baseline·mcs2 참조는 기존 렌더 재사용, SHS 8개 threshold(T27~T6)는 
 
 ### 3.1 CM_1067
 
+seed42에서 여전히 좌측 하단 노이즈 발생, 우측 하단 노이즈는 완화
+
 | run (밀도) | seed42 | seed1 | seed2 | seed3 |
 |---|---|---|---|---|
 | baseline (.068) | <img src="../outputs/0803/seed_run4/42/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_run4/1/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_run4/2/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_run4/3/CM_1067.png" width="115"> |
@@ -100,6 +95,8 @@ baseline·mcs2 참조는 기존 렌더 재사용, SHS 8개 threshold(T27~T6)는 
 | (참조) mcs2 | <img src="../outputs/0803/seed_mcs2/42/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_mcs2/1/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_mcs2/2/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_mcs2/3/CM_1067.png" width="115"> |
 
 ### 3.2 CM_1082
+
+seed42, seed1 상단 머릿결 노이즈 완화
 
 | run (밀도) | seed42 | seed1 | seed2 | seed3 |
 |---|---|---|---|---|
@@ -166,7 +163,7 @@ baseline·mcs2 참조는 기존 렌더 재사용, SHS 8개 threshold(T27~T6)는 
 2. **GT 오차 std**(표의 "±" 값): 조건 간 큰 추세 없이 0.4~0.72 사이에서 흔들림 — 이전에 이미
    확인한 대로 이 std는 감도가 낮은 지표라 아래 3번을 판정에 사용.
 3. **seed 불일치**: 위 §4.1·4.2 표에서 baseline → SHS_T27 → T24 → T21 → T18 → L1 → SHS_T15
-   → SHS_T12 구간이 **두 이미지 모두 거의 완벽하게 단조 감소**(잡음 ±0.1~0.3 수준). 밀도
+   → SHS_T12 구간이 **두 이미지 모두 거의 완벽하게 단조 감소**(잡음 ±0.1-0.3 수준). 밀도
    0.14 부근(SHS_T12) 이후부터 SHS_T9 → SHS_T6/L2_mid → L3_strong 구간은 10.5~11.3 사이에서
    완만하게 등락(두 이미지에서 T6·L2의 상대 순서가 뒤바뀔 만큼 밀도차가 거의 없음) — 진짜
    포화 지점은 여기부터.
