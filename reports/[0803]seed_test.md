@@ -76,7 +76,7 @@ Sparse한 hair stroke 조건에서 stroke 사이의 머리카락 방향은 모�
 
 ## 5. 정량 평가 — 방향 오차 (structure tensor)
 
-§4의 판정이 전부 육안이므로, 같은 이미지를 방향 지표로 재측정. 구현·파라미터는
+§4의 판정이 전부 정성평가이므로, 같은 이미지를 방향 지표로 재측정. 구현·파라미터는
 `reports/2026-08-04-orientation-metric-implementation-guide.md` 를 그대로 사용.
 코드: [`scripts/eval/orientation_metric.py`](../scripts/eval/orientation_metric.py)
 
