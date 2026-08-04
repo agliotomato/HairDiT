@@ -61,7 +61,7 @@ sweep) 점들이 밀도축에서 서로 끼어들며 같은 곡선 위에 놓여
 
 (baseline을 SHS 코드의 matte 이진화 기준(`>230`)으로 재계산하면 0.0679/0.0728 — 자체 구현의
 `matte>127` 기준(0.0689/0.0737, `[0804]densified_sketch.md` §1.1)과 약 1.5% 차이. matte
-이진화 기준 차이에서 오는 것으로, 아래 §3 병합 표에서는 각 구현이 실제로 쓴 값을 그대로 표기함.)
+이진화 기준 차이에서 오는 것으로, 아래 §4 병합 표에서는 각 구현이 실제로 쓴 값을 그대로 표기함.)
 
 시각화 검증(평행성·색 전파·잔가지·경계 유착, `[0804]densified_sketch.md` §1.2와 동일 체크리스트)도
 전 threshold 지점에서 통과 — 실루엣 인접 얇은 stroke는 같은 이유(원본 stroke가 실루엣보다
@@ -80,12 +80,48 @@ sweep) 점들이 밀도축에서 서로 끼어들며 같은 곡선 위에 놓여
 
 ---
 
-## 3. 판정 — 방향 지표 (자체 구현 + SHS 공식 코드 병합, 밀도순)
+## 3. 생성 결과 — SHS 공식 코드 조건 × seed
+
+baseline·mcs2 참조는 기존 렌더 재사용, SHS 8개 threshold(T27~T6)는 신규 추론. 밀도 오름차순.
+
+### 3.1 CM_1067
+
+| run (밀도) | seed42 | seed1 | seed2 | seed3 |
+|---|---|---|---|---|
+| baseline (.068) | <img src="../outputs/0803/seed_run4/42/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_run4/1/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_run4/2/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_run4/3/CM_1067.png" width="115"> |
+| SHS_T27 (.080) | <img src="../outputs/0804/densified_shs/T27/42/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T27/1/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T27/2/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T27/3/CM_1067.png" width="115"> |
+| SHS_T24 (.089) | <img src="../outputs/0804/densified_shs/T24/42/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T24/1/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T24/2/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T24/3/CM_1067.png" width="115"> |
+| SHS_T21 (.098) | <img src="../outputs/0804/densified_shs/T21/42/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T21/1/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T21/2/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T21/3/CM_1067.png" width="115"> |
+| SHS_T18 (.110) | <img src="../outputs/0804/densified_shs/T18/42/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T18/1/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T18/2/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T18/3/CM_1067.png" width="115"> |
+| SHS_T15기본 (.122) | <img src="../outputs/0804/densified_shs/T15_shs_default/42/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T15_shs_default/1/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T15_shs_default/2/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T15_shs_default/3/CM_1067.png" width="115"> |
+| SHS_T12 (.140) | <img src="../outputs/0804/densified_shs/T12/42/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T12/1/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T12/2/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T12/3/CM_1067.png" width="115"> |
+| SHS_T9 (.155) | <img src="../outputs/0804/densified_shs/T9/42/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T9/1/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T9/2/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T9/3/CM_1067.png" width="115"> |
+| SHS_T6 (.162) | <img src="../outputs/0804/densified_shs/T6/42/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T6/1/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T6/2/CM_1067.png" width="115"> | <img src="../outputs/0804/densified_shs/T6/3/CM_1067.png" width="115"> |
+| (참조) mcs2 | <img src="../outputs/0803/seed_mcs2/42/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_mcs2/1/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_mcs2/2/CM_1067.png" width="115"> | <img src="../outputs/0803/seed_mcs2/3/CM_1067.png" width="115"> |
+
+### 3.2 CM_1082
+
+| run (밀도) | seed42 | seed1 | seed2 | seed3 |
+|---|---|---|---|---|
+| baseline (.073) | <img src="../outputs/0803/seed_run4/42/CM_1082.png" width="115"> | <img src="../outputs/0803/seed_run4/1/CM_1082.png" width="115"> | <img src="../outputs/0803/seed_run4/2/CM_1082.png" width="115"> | <img src="../outputs/0803/seed_run4/3/CM_1082.png" width="115"> |
+| SHS_T27 (.083) | <img src="../outputs/0804/densified_shs/T27/42/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T27/1/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T27/2/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T27/3/CM_1082.png" width="115"> |
+| SHS_T24 (.092) | <img src="../outputs/0804/densified_shs/T24/42/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T24/1/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T24/2/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T24/3/CM_1082.png" width="115"> |
+| SHS_T21 (.102) | <img src="../outputs/0804/densified_shs/T21/42/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T21/1/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T21/2/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T21/3/CM_1082.png" width="115"> |
+| SHS_T18 (.118) | <img src="../outputs/0804/densified_shs/T18/42/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T18/1/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T18/2/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T18/3/CM_1082.png" width="115"> |
+| SHS_T15기본 (.129) | <img src="../outputs/0804/densified_shs/T15_shs_default/42/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T15_shs_default/1/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T15_shs_default/2/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T15_shs_default/3/CM_1082.png" width="115"> |
+| SHS_T12 (.142) | <img src="../outputs/0804/densified_shs/T12/42/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T12/1/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T12/2/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T12/3/CM_1082.png" width="115"> |
+| SHS_T9 (.153) | <img src="../outputs/0804/densified_shs/T9/42/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T9/1/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T9/2/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T9/3/CM_1082.png" width="115"> |
+| SHS_T6 (.163) | <img src="../outputs/0804/densified_shs/T6/42/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T6/1/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T6/2/CM_1082.png" width="115"> | <img src="../outputs/0804/densified_shs/T6/3/CM_1082.png" width="115"> |
+| (참조) mcs2 | <img src="../outputs/0803/seed_mcs2/42/CM_1082.png" width="115"> | <img src="../outputs/0803/seed_mcs2/1/CM_1082.png" width="115"> | <img src="../outputs/0803/seed_mcs2/2/CM_1082.png" width="115"> | <img src="../outputs/0803/seed_mcs2/3/CM_1082.png" width="115"> |
+
+---
+
+## 4. 판정 — 방향 지표 (자체 구현 + SHS 공식 코드 병합, 밀도순)
 
 방향 지표는 기존에 캘리브레이션된 파라미터(`sigma_i=3`, `erode_px=6`, GT=`data/test/ori_image`)를 그대로 재사용.
 아래 표는 자체 구현(K 기반)과 SHS 공식 코드(threshold 기반) 조건을 밀도 오름차순으로 병합한 것.
 
-### 3.1 CM_1067
+### 4.1 CM_1067
 
 | run (밀도) | seed42 | seed1 | seed2 | seed3 | GT 오차 mean±std | coherence | **seed 불일치** |
 |---|---|---|---|---|---|---|---|
@@ -103,7 +139,7 @@ sweep) 점들이 밀도축에서 서로 끼어들며 같은 곡선 위에 놓여
 | L3_strong (.172) | 15.30 | 15.27 | 16.19 | 14.92 | 15.42±0.54 | 0.809 | **10.75±0.37** |
 | (참조) mcs2 | 15.93 | 15.64 | 16.13 | 15.24 | 15.73±0.38 | 0.748 | **10.12±0.17** |
 
-### 3.2 CM_1082
+### 4.2 CM_1082
 
 | run (밀도) | seed42 | seed1 | seed2 | seed3 | GT 오차 mean±std | coherence | **seed 불일치** |
 |---|---|---|---|---|---|---|---|
@@ -121,7 +157,7 @@ sweep) 점들이 밀도축에서 서로 끼어들며 같은 곡선 위에 놓여
 | L3_strong (.172) | 14.83 | 14.94 | 16.23 | 15.83 | 15.46±0.68 | 0.806 | **11.31±0.43** |
 | (참조) mcs2 | 14.51 | 14.88 | 15.20 | 15.21 | 14.95±0.33 | 0.796 | **9.72±0.43** |
 
-### 3.3 독립 분석
+### 4.3 독립 분석
 
 가이드 §5 판정표: "std 감소 + mean 감소 → 진단 확증", "K(밀도)에 따른 단조 추세 → 가장 강한 증거".
 
@@ -129,7 +165,7 @@ sweep) 점들이 밀도축에서 서로 끼어들며 같은 곡선 위에 놓여
    (OOD 신호) 없음.**
 2. **GT 오차 std**(표의 "±" 값): 조건 간 큰 추세 없이 0.4~0.7 사이에서 흔들림 — 이전에 이미
    확인한 대로 이 std는 감도가 낮은 지표라 아래 3번을 판정에 사용.
-3. **seed 불일치**: 위 §3.1·3.2 표에서 baseline → SHS_T27 → T24 → T21 → T18 → L1 → SHS_T15
+3. **seed 불일치**: 위 §4.1·4.2 표에서 baseline → SHS_T27 → T24 → T21 → T18 → L1 → SHS_T15
    → SHS_T12 구간이 **두 이미지 모두 거의 완벽하게 단조 감소**(잡음 ±0.1~0.3 수준). 밀도
    0.14 부근(SHS_T12/L2) 이후부터 10.5~11.3 사이에서 완만하게 등락 — 진짜 포화 지점은
    여기부터.
@@ -143,7 +179,7 @@ sweep) 점들이 밀도축에서 서로 끼어들며 같은 곡선 위에 놓여
 
 ---
 
-## 4. 이미지별 온도차
+## 5. 이미지별 온도차
 
 전체 sweep(자체 구현 3점 + SHS 공식 8점) 기준 최고 개선치: CM_1067은 baseline 14.41 → 최저
 10.55(SHS_T12/T9 동률), **26.8% 감소**. CM_1082는 baseline 14.34 → 최저 11.16(SHS_T9),
