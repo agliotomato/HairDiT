@@ -11,53 +11,59 @@ run5(densification) 결과
 run4 vs run5, 둘 다 epoch15(진짜 동일epoch, §2-2 지표와 짝 맞춤). sketch는 conditioning에 실제로
 쓰인 `data/test/recolor_sketch`.
 
+### CM_1067
+seed42 하단 노이즈 여전히 존재  
+seed1, 2, 3모두 머릿결 경계가 더 노이지해짐(헤어 상단부분 머릿결이 run4대비 블러리하고 노이지하게 나타남)  
+| run | sketch | seed42 | seed1 | seed2 | seed3 |
+|---|---|---|---|---|---|
+| run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1067.png" width="130"> |
+| run5 epoch15 | <img src="../data/test/recolor_sketch/CM_1067.png" width="130"> | <img src="../outputs/0806/run5/42/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1067.png" width="130"> |
+
+### CM_1082
+seed42 우측 상단, seed3 좌측 상단 머릿결 노이즈해짐
+| run | sketch | seed42 | seed1 | seed2 | seed3 |
+|---|---|---|---|---|---|
+| run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1082.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1082.png" width="130"> |
+| run5 epoch15 | <img src="../data/test/recolor_sketch/CM_1082.png" width="130"> | <img src="../outputs/0806/run5/42/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1082.png" width="130"> |
+
+### CM_1027
+seed42, seed1 상단에서 위 두 케이스에서 지적한 노이즈해짐, 블러리해짐이 가장 잘보임. 머릿결이 엉키는 것과 같이 보이는 현상이 일부 케이스에서 반복
+
+| run | sketch | seed42 | seed1 | seed2 | seed3 |
+|---|---|---|---|---|---|
+| run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1027.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1027.png" width="130"> |
+| run5 epoch15 | <img src="../data/test/recolor_sketch/CM_1027.png" width="130"> | <img src="../outputs/0806/run5/42/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1027.png" width="130"> |
+
 ### CM_1007
 | run | sketch | seed42 | seed1 | seed2 | seed3 |
 |---|---|---|---|---|---|
 | run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1007.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1007.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1007.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1007.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1007.png" width="130"> |
-| run5 epoch15 | (위와 동일) | <img src="../outputs/0806/run5/42/epoch15/CM_1007.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1007.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1007.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1007.png" width="130"> |
-
-### CM_1027
-| run | sketch | seed42 | seed1 | seed2 | seed3 |
-|---|---|---|---|---|---|
-| run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1027.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1027.png" width="130"> |
-| run5 epoch15 | (위와 동일) | <img src="../outputs/0806/run5/42/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1027.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1027.png" width="130"> |
+| run5 epoch15 | <img src="../data/test/recolor_sketch/CM_1007.png" width="130"> | <img src="../outputs/0806/run5/42/epoch15/CM_1007.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1007.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1007.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1007.png" width="130"> |
 
 ### CM_1033
 | run | sketch | seed42 | seed1 | seed2 | seed3 |
 |---|---|---|---|---|---|
 | run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1033.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1033.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1033.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1033.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1033.png" width="130"> |
-| run5 epoch15 | (위와 동일) | <img src="../outputs/0806/run5/42/epoch15/CM_1033.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1033.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1033.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1033.png" width="130"> |
-
-### CM_1067
-| run | sketch | seed42 | seed1 | seed2 | seed3 |
-|---|---|---|---|---|---|
-| run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1067.png" width="130"> |
-| run5 epoch15 | (위와 동일) | <img src="../outputs/0806/run5/42/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1067.png" width="130"> |
+| run5 epoch15 | <img src="../data/test/recolor_sketch/CM_1033.png" width="130"> | <img src="../outputs/0806/run5/42/epoch15/CM_1033.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1033.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1033.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1033.png" width="130"> |
 
 ### CM_1068
+seed1 좌측하단, seed3 가르마 노이즈
 | run | sketch | seed42 | seed1 | seed2 | seed3 |
 |---|---|---|---|---|---|
 | run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1068.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1068.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1068.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1068.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1068.png" width="130"> |
-| run5 epoch15 | (위와 동일) | <img src="../outputs/0806/run5/42/epoch15/CM_1068.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1068.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1068.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1068.png" width="130"> |
-
-### CM_1082
-| run | sketch | seed42 | seed1 | seed2 | seed3 |
-|---|---|---|---|---|---|
-| run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1082.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1082.png" width="130"> |
-| run5 epoch15 | (위와 동일) | <img src="../outputs/0806/run5/42/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1082.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1082.png" width="130"> |
+| run5 epoch15 | <img src="../data/test/recolor_sketch/CM_1068.png" width="130"> | <img src="../outputs/0806/run5/42/epoch15/CM_1068.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1068.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1068.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1068.png" width="130"> |
 
 ### CM_1084
 | run | sketch | seed42 | seed1 | seed2 | seed3 |
 |---|---|---|---|---|---|
 | run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1084.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1084.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1084.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1084.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1084.png" width="130"> |
-| run5 epoch15 | (위와 동일) | <img src="../outputs/0806/run5/42/epoch15/CM_1084.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1084.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1084.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1084.png" width="130"> |
+| run5 epoch15 | <img src="../data/test/recolor_sketch/CM_1084.png" width="130"> | <img src="../outputs/0806/run5/42/epoch15/CM_1084.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1084.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1084.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1084.png" width="130"> |
 
 ### CM_1172
 | run | sketch | seed42 | seed1 | seed2 | seed3 |
 |---|---|---|---|---|---|
 | run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1172.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1172.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1172.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1172.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1172.png" width="130"> |
-| run5 epoch15 | (위와 동일) | <img src="../outputs/0806/run5/42/epoch15/CM_1172.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1172.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1172.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1172.png" width="130"> |
+| run5 epoch15 | <img src="../data/test/recolor_sketch/CM_1172.png" width="130"> | <img src="../outputs/0806/run5/42/epoch15/CM_1172.png" width="130"> | <img src="../outputs/0806/run5/1/epoch15/CM_1172.png" width="130"> | <img src="../outputs/0806/run5/2/epoch15/CM_1172.png" width="130"> | <img src="../outputs/0806/run5/3/epoch15/CM_1172.png" width="130"> |
 
 ## 2. 방향 오차 / 시드 불일치 평가 ([0803]seed_test.md §5 방법론)
 
