@@ -9,16 +9,22 @@ Key design constraints:
     (follows SketchHairSalon paper: each iteration samples a random pixel from
      the corresponding target region → color correspondence is maintained)
   - MatteBoundaryPerturbation: recomputes target after matte warp
+  - DensifyAug (run5): SHS 기하 마스크 로드 + 색 전파. 반드시 StrokeColorSampler '뒤'.
+    epoch 단위 라운드로빈이므로 트레이너가 매 epoch ComposeAug.set_epoch(epoch)을 호출해야 한다.
 """
 
 from __future__ import annotations
 
 import random
+from pathlib import Path
 
+import cv2
 import kornia.filters as KF
 import kornia.morphology as KM
+import numpy as np
 import torch
 import torch.nn.functional as F
+from PIL import Image
 
 from .utils import soft_composite
 
@@ -199,6 +205,95 @@ class MatteBoundaryPerturbation:
 
 
 # ---------------------------------------------------------------------------
+# 4. Stroke Densification  (SHS auto-completion, run5 밀도 혼합 증강)
+# ---------------------------------------------------------------------------
+
+class DensifyAug:
+    """사전 생성된 SHS 기하 마스크를 로드해 추가 stroke에 색을 전파한다.
+
+    reports/2026-08-05-run5-density-training-instructions.md §4~5.
+
+    마스크는 `scripts/preprocess/densify_shs.py masks`로 오프라인 생성한다. 기하는 색과
+    무관하므로 1회만 구우면 되고, 색 전파만 매 스텝 여기서 수행한다.
+
+    두 가지 제약이 설계를 결정한다:
+      - **StrokeColorSampler 바로 뒤에 배치해야 한다**(§4-4). StrokeColorSampler는 sketch의
+        exact RGB 그룹 단위로 색을 다시 뽑으므로, 색 전파가 먼저 돌면 추가 stroke만 옛 색을
+        갖는 불일치가 생긴다.
+      - **epoch 단위 라운드로빈이며 샘플별 무작위가 아니다**(§4-2). 한 epoch 안의 모든 샘플이
+        동일한 threshold를 쓴다. 트레이너가 매 epoch 시작 시 `set_epoch(epoch)`을 **0-based**
+        루프 변수로 호출해야 한다 — 1-based를 넘기면 매핑이 한 칸 밀린다.
+
+    색 전파는 `scripts/preprocess/densify_shs.propagate_color`와 동일한 semantics다
+    (최근접 원본 stroke 픽셀의 색 복사). 기하(최근접 라벨)만 cv2로 얻고 색은 float 텐서에서
+    gather하므로 uint8 양자화 손실이 없다. 원본 stroke는 `sketch.clone()`에서 시작해 추가
+    픽셀만 덮으므로 구조적으로 보존된다(SHS §6.4: 수동 annotation이 hair wisp junction 형성에 필수).
+
+    Args:
+        mask_root:  마스크 루트. 하위에 T{threshold}/{stem}.png (0/255 이진)
+        thresholds: epoch 라운드로빈 순서. None = ∞(원본 sketch, densification 없음)
+    """
+
+    def __init__(
+        self,
+        mask_root: str = "data/densify_masks",
+        thresholds: tuple = (None, 21, 15, 12),
+    ):
+        self.mask_root = Path(mask_root)
+        self.thresholds = list(thresholds)
+        if not self.thresholds:
+            raise ValueError("thresholds가 비어 있음")
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int):
+        """0-based epoch 인덱스. trainer가 매 epoch 시작 시 호출한다."""
+        self.epoch = epoch
+
+    def current_threshold(self):
+        return self.thresholds[self.epoch % len(self.thresholds)]
+
+    def __call__(self, sample: dict) -> dict:
+        t = self.current_threshold()
+        if t is None:                                   # ∞ = 원본. 0으로 로깅
+            return {**sample, "densify_t": 0}
+
+        sketch = sample["sketch"]                       # (3,H,W) float32 [0,1], 재착색 완료
+        path = self.mask_root / f"T{t}" / f"{sample['filename']}.png"
+        if not path.exists():
+            # 조용히 원본으로 폴백하면 "밀도 혼합으로 학습했다"는 전제가 로그상 참인 채로
+            # 실제로는 깨진다. 반드시 크래시시킨다.
+            raise FileNotFoundError(f"densify 마스크 없음: {path}")
+
+        mask = torch.from_numpy(np.array(Image.open(path))) > 0     # (H,W) bool
+        if mask.shape != sketch.shape[1:]:
+            raise ValueError(
+                f"mask/sketch 해상도 불일치: {path} {tuple(mask.shape)} vs {tuple(sketch.shape[1:])}"
+            )
+
+        src = sketch.max(dim=0).values > 0              # SHS 내부 기준 sk_gray>0과 동일
+        add = mask & (~src)                             # 원본과 겹치면 원본 우선
+        if not src.any() or not add.any():
+            return {**sample, "densify_t": t}
+
+        # 최근접 원본 stroke 픽셀의 인덱스 (기하만 cv2로 계산)
+        src_np = src.numpy()
+        add_np = add.numpy()
+        _, labels = cv2.distanceTransformWithLabels(
+            (~src_np).astype(np.uint8), cv2.DIST_L2, 3,
+            labelType=cv2.DIST_LABEL_PIXEL)             # 0 = stroke(시드)
+        ys, xs = np.nonzero(src_np)
+        lut = np.zeros(labels.max() + 1, dtype=np.int64)
+        lut[labels[ys, xs]] = np.arange(len(ys))        # label → 시드 인덱스
+        ny, nx = np.nonzero(add_np)
+        seed = lut[labels[ny, nx]]
+
+        out = sketch.clone()                            # 원본 stroke는 건드리지 않는다
+        out[:, torch.from_numpy(ny), torch.from_numpy(nx)] = \
+            sketch[:, torch.from_numpy(ys[seed]), torch.from_numpy(xs[seed])]
+        return {**sample, "sketch": out, "densify_t": t}
+
+
+# ---------------------------------------------------------------------------
 # Pipeline builder
 # ---------------------------------------------------------------------------
 
@@ -208,13 +303,22 @@ class ComposeAug:
     def __init__(self, transforms: list):
         self.transforms = transforms
 
+    def set_epoch(self, epoch: int):
+        """epoch 의존 augmentation(DensifyAug)에 0-based epoch을 전파한다."""
+        for t in self.transforms:
+            if hasattr(t, "set_epoch"):
+                t.set_epoch(epoch)
+
     def __call__(self, sample: dict) -> dict:
         for t in self.transforms:
             sample = t(sample)
         return sample
 
 
-def build_augmentation_pipeline(phase: str = "pretrain") -> ComposeAug:
+def build_augmentation_pipeline(
+    phase: str = "pretrain",
+    densify: dict | None = None,
+) -> ComposeAug:
     """
     Build the augmentation pipeline for a given training phase.
 
@@ -223,15 +327,31 @@ def build_augmentation_pipeline(phase: str = "pretrain") -> ComposeAug:
       AppearanceJitter 제거: target 색을 흔들면 stroke↔target 색 대응이 깨짐.
 
     Args:
-        phase: "pretrain" (unbraid) or "finetune" (braid)
+        phase:   "pretrain" (unbraid) or "finetune" (braid)
+        densify: run5 밀도 혼합 증강 설정 (config의 training.densify). None이거나
+                 enabled가 false면 파이프라인이 run4와 완전히 동일하다.
+                 densification은 unbraid 전용이므로(SHS는 braid에 절차적 3D 모델 사용)
+                 finetune 단계에는 붙이지 않는다.
     """
+    dens = []
+    if densify and densify.get("enabled", False):
+        dens = [DensifyAug(
+            mask_root=densify.get("mask_root", "data/densify_masks"),
+            thresholds=tuple(densify.get("thresholds", (None, 21, 15, 12))),
+        )]
+
     if phase == "pretrain":
         return ComposeAug([
             StrokeColorSampler(p=1.0),
+            *dens,                       # ← StrokeColorSampler 바로 뒤여야 한다 (§4-4)
             ThicknessJitter(p=0.5),
             MatteBoundaryPerturbation(p=0.3),
         ])
     elif phase == "finetune":
+        if dens:
+            raise ValueError(
+                "densify는 unbraid(pretrain) 전용이다. finetune에서 켤 수 없다 (지침서 §3)."
+            )
         return ComposeAug([
             StrokeColorSampler(p=1.0),
             ThicknessJitter(p=0.3),

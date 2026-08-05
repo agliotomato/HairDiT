@@ -175,7 +175,13 @@ class HairLoss(nn.Module):
         w_flow:            weight for flow matching loss (default 1.0)
         w_lpips:           weight for perceptual loss (default 0.1)
         w_edge:            weight for edge alignment loss (default 0.05)
-        lpips_warmup_frac: fraction of total steps before LPIPS activates (pretrain only)
+        lpips_noise_cutoff: maximum scheduler sigma for LPIPS activation.
+                            sigma is the noise coefficient of
+                            x_t = (1-sigma)*x + sigma*noise, so 0.7 disables
+                            LPIPS over the highest-noise 30% of the timestep
+                            *range* — the PixelGen noise gate g(t)=1[t>=0.3]
+                            (paper Eq. 9) under their x_t = t*x + (1-t)*eps,
+                            i.e. their t equals our (1 - sigma).
         scale_sync:        divide the flow term by s=clamp(numel(v_pred)/‖matte_latent‖₁, s_min, s_max)
                             to sync its gradient scale with lpips/edge (default True)
         s_min, s_max:       clamp range for s (default 20.0 / 120.0)
@@ -187,7 +193,7 @@ class HairLoss(nn.Module):
         w_flow: float = 1.0,
         w_lpips: float = 0.1,
         w_edge: float = 0.05,
-        lpips_warmup_frac: float = 0.3,
+        lpips_noise_cutoff: float = 0.7,
         scale_sync: bool = True,
         s_min: float = 20.0,
         s_max: float = 120.0,
@@ -198,7 +204,7 @@ class HairLoss(nn.Module):
         self.w_flow = w_flow
         self.w_lpips = w_lpips
         self.w_edge = w_edge
-        self.lpips_warmup_frac = lpips_warmup_frac
+        self.lpips_noise_cutoff = lpips_noise_cutoff
         self.scale_sync = scale_sync
         self.s_min, self.s_max = s_min, s_max
 
@@ -263,15 +269,31 @@ class HairLoss(nn.Module):
         total_loss = flow_term
         loss_dict["loss_flow"] = flow_term.item()   # actual flow term used for training
 
-        # Determine if perceptual loss should activate
-        lpips_active = (
-            self.phase == "finetune"
-            or current_step >= int(self.lpips_warmup_frac * total_steps)
+        # 2026-08-05: Replace epoch-progress LPIPS warmup with PixelGen's noise
+        # gate (paper Eq. 9, g(t)=1[t>=0.3]). PixelGen interpolates as
+        # x_t = t*x + (1-t)*eps, so their t is the *data* coefficient and their
+        # gate keeps the noise coefficient (1-t) <= 0.7. Our sigma IS the noise
+        # coefficient (noisy = (1-sigma)*latents + sigma*noise), so the same
+        # gate is sigma <= 0.7 — no shift conversion applies: SD3.5's shift=3.0
+        # is already baked into scheduler.sigmas, and PixelGen trains with
+        # timeshift=1.0 (identity). Their Table 5f puts tau=0.1 (our 0.9) at
+        # "limited effect" and tau=0.6 (our 0.4) at "substantially hurts".
+        # The mask is per sample, not per batch, because a batch can contain
+        # multiple sigma values.
+        if not 0.0 < self.lpips_noise_cutoff <= 1.0:
+            raise ValueError(
+                f"lpips_noise_cutoff must be in (0, 1], got {self.lpips_noise_cutoff}"
+            )
+        lpips_sample_mask = sigmas.view(-1).float() <= self.lpips_noise_cutoff if sigmas is not None else None
+        lpips_active = bool(lpips_sample_mask is not None and lpips_sample_mask.any())
+        loss_dict["lpips_active_fraction"] = (
+            float(lpips_sample_mask.float().mean()) if lpips_sample_mask is not None else 0.0
         )
 
         l_lpips = None
         l_edge = None
-        if lpips_active and vae is not None and x_t is not None and sigmas is not None:
+        edge_active = self.phase == "finetune" and sketch is not None and matte is not None
+        if (lpips_active or edge_active) and vae is not None and x_t is not None and sigmas is not None:
             # Flow matching x0 recovery: x0 = x_t - sigma * v_pred
             # x0_pred must stay in the computation graph so LPIPS gradient
             # flows back through v_pred → HairControlNet.
@@ -279,14 +301,20 @@ class HairLoss(nn.Module):
             x0_pred = x_t - sigmas * v_pred            # (B, 16, 64, 64)
             pred_rgb_11 = vae.decode(x0_pred)          # (B, 3, H, W) in [-1, 1]
 
-            if target_rgb is not None and matte is not None:
+            if target_rgb is not None and matte is not None and lpips_active:
                 target_rgb_11 = VAEWrapper.normalize(target_rgb)
-                l_lpips = self.perc_loss(pred_rgb_11, target_rgb_11, matte)
+                active = lpips_sample_mask
+                l_lpips = self.perc_loss(
+                    pred_rgb_11[active],
+                    target_rgb_11[active],
+                    matte[active],
+                )
                 total_loss = total_loss + self.w_lpips * l_lpips
                 loss_dict["loss_lpips"] = l_lpips.item()
 
-            # Edge loss: braid fine-tune only
-            if self.phase == "finetune" and sketch is not None and matte is not None:
+            # Edge loss remains active for every phase-2 sample; timestep
+            # gating applies to LPIPS only.
+            if edge_active:
                 l_edge, stroke_density = self.edge_loss(pred_rgb_11, sketch, matte)
                 total_loss = total_loss + self.w_edge * l_edge
                 loss_dict["loss_edge"] = l_edge.item()

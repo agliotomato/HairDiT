@@ -137,7 +137,9 @@ class Trainer:
             w_flow=config["training"]["loss_weights"].get("flow", 1.0),
             w_lpips=config["training"]["loss_weights"].get("lpips", 0.1),
             w_edge=config["training"]["loss_weights"].get("edge", 0.0),
-            lpips_warmup_frac=config["training"]["loss_weights"].get("lpips_warmup_frac", 0.3),
+            # 2026-08-05: LPIPS is gated by per-sample noise/timestep rather
+            # than by training progress. Keep the cutoff explicit in config.
+            lpips_noise_cutoff=config["training"]["loss_weights"].get("lpips_noise_cutoff", 0.7),
             scale_sync=config["training"]["loss_weights"].get("scale_sync", True),
             s_min=config["training"]["loss_weights"].get("s_min", 20.0),
             s_max=config["training"]["loss_weights"].get("s_max", 120.0),
@@ -294,7 +296,10 @@ class Trainer:
 
     def _setup_data(self):
         cfg = self.cfg["training"]
-        aug = build_augmentation_pipeline(self.phase)
+        # run5 밀도 혼합 증강: epoch 단위 라운드로빈이라 트레이너가 파이프라인을 직접 들고
+        # 매 epoch set_epoch()을 호출해야 한다 (아래 epoch 루프).
+        aug = build_augmentation_pipeline(self.phase, cfg.get("densify"))
+        self._aug = aug
 
         dataset_name = cfg["dataset"]
         replay_sampler = None
@@ -472,6 +477,12 @@ class Trainer:
 
         for epoch in range(self.start_epoch, epochs):
             self._current_epoch = epoch + 1
+            # run5 밀도 혼합: 0-based epoch을 넘겨야 ∞/T21/T15/T12 매핑이 지침서 §4-2 표와
+            # 맞는다(_current_epoch는 1-based라 넘기면 한 칸 밀린다). DataLoader가
+            # num_workers=4로 매 epoch iterator 생성 시 worker를 재fork하므로, 아래
+            # tqdm(self.train_loader) '전'에 상태를 바꿔야 자식 프로세스에 전달된다.
+            # ⚠️ persistent_workers를 켜면 재fork가 없어 threshold가 epoch 0 값에 굳는다.
+            self._aug.set_epoch(epoch)
             self.controlnet.train()
 
             epoch_losses = []
@@ -706,6 +717,11 @@ class Trainer:
 
             self.optimizer.step()
             self.optimizer.zero_grad()
+
+        # run5: epoch↔threshold 매핑이 설계대로였는지 사후에 검증할 유일한 기록.
+        # 한 epoch의 전 샘플이 동일 threshold이므로 배치의 첫 원소만 봐도 된다.
+        if "densify_t" in batch:
+            log_dict["densify_t"] = float(batch["densify_t"][0])
 
         return total_loss, log_dict
 
