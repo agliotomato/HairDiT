@@ -184,6 +184,7 @@ class Trainer:
         # 정점 ckpt(best.pth) 선정은 제거됨 — train loop 주석 참고
         self._best_unbraid = float("inf")
         self._patience     = 0
+        self.early_stopping = config["training"].get("early_stopping", True)
 
         self._restore_training_state()
 
@@ -548,7 +549,7 @@ class Trainer:
                 # 채택은 epoch_{n}.pth와 매 epoch perceptual val 로그를 보고 사후에 수동으로 한다.
                 # (reports/[0729]retrain_plan_v2.md)
 
-                if self._patience >= 3:
+                if self.early_stopping and self._patience >= 3:
                     self.accelerator.print(f"Early stop at epoch {epoch+1}")
                     stop = True
 

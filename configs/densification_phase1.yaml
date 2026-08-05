@@ -38,6 +38,10 @@ training:
   schedule: all
   gate_alpha: 1.0
   resume: null
+  # H100 trainer.py 로컬 수정(early_stopping config 토글, 미커밋)으로 조기종료 자체를
+  # 끌 수 있게 됨. dE_unbraid 3-epoch 정체 시 조기종료되면 epoch 15 도달 전에 멈춰
+  # "epoch15=T15 밀도 종료"라는 위 계획이 깨지므로 명시적으로 끈다.
+  early_stopping: false
 
   loss_weights:
     flow: 1.0
