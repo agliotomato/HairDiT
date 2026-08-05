@@ -13,7 +13,7 @@ run4 vs run5, 둘 다 epoch15(진짜 동일epoch, §2-2 지표와 짝 맞춤). s
 
 ### CM_1067
 seed42 하단 노이즈 여전히 존재  
-seed1, 2, 3모두 머릿결 경계가 더 노이지해짐(헤어 상단부분 머릿결이 run4대비 블러리하고 노이지하게 나타남)  
+seed1, 2, 3모두 머릿결이 더 노이지해짐(헤어 상단부분 머릿결이 run4대비 블러리하고 노이지하게 나타남)  
 | run | sketch | seed42 | seed1 | seed2 | seed3 |
 |---|---|---|---|---|---|
 | run4 epoch15 | <img src="../data/test/recolor_sketch/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/42/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/1/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/2/epoch15/CM_1067.png" width="130"> | <img src="../outputs/0806/run4/3/epoch15/CM_1067.png" width="130"> |
@@ -97,7 +97,7 @@ seed1 좌측하단, seed3 가르마 노이즈
 
 ## 해석
 - 정성적으로도 정량적으로도 run5가 run4보다 열세
-- 가설(미검증): DensifyAug가 원본 stroke 사이 빈 공간에 보간된 stroke로 색만 채우다 보니, 모델이 그 영역의 방향을 원본 stroke 방향보다 더 평균화/불확실하게 학습했을 가능성. coherence가 densify 노출이 늘수록(epoch 진행) 단조 하락하는 패턴이 방향은 일치하나 인과 검증은 안 됨.
+- 가설(미검증): DensifyAug가 원본 stroke 사이 빈 공간에 보간된 stroke로 색만 채우다 보니, 모델이 그 영역의 방향을 원본 stroke 방향보다 더 평균화/불확실하게 학습했을 가능성. 동일 epoch 대응비교(5·10·15 전부)에서 run5의 coherence가 run4보다 항상 낮음(0.731<0.769, 0.745<0.762, 0.708<0.761)이 방향은 일치하나 인과 검증은 안 됨.
 
 ## 코드 상에서 바꾼 거
 
