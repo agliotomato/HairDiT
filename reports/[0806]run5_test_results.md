@@ -11,6 +11,15 @@
 
 ## 요약
 
+1. `run5_2`의 densify 조건은 방향 오차·coherence·seed 불일치 모두에서 열화됨.
+2. `run5_1` 조건은 방향 지표상 run4보다 개선됨. 다만 게이트 위치와 누적 LPIPS 노출량(5배)이
+   함께 바뀐 것이므로, 개선을 게이트 위치 단독 효과로 귀속할 수 없음.
+3. 따라서 run5의 노이즈·머릿결 엉킴은 noise-gate보다 densification과 더 강하게 연관됨.
+   두 변수는 가법적이지 않고, densify의 손상은 LPIPS 노출이 늘어난 조건에서 약 2배로 커짐.
+4. DensifyAug 내부의 구체적 원인은 추가 통제 실험 없이는 확정할 수 없음.
+5. LPIPS의 최적 가중치도 미확정이며, 지금까지 밟아본 실효 세기는 `R≈0.02`와 `R≈1.0` 두 점뿐임.
+   그 사이 구간은 게이트 도입 이후 한 번도 평가되지 않음(§3.3-c).
+
 ## 1. 결과 이미지 비교
 
 ### 1.1 run4 vs run5 vs run5_1 vs run5_2
@@ -229,7 +238,7 @@ T2-b(`w ← w/게이트율`)를 이미 암묵 수행 중이라, config 주석과
 
 #### (d) 외부 논문의 수치는 이식되지 않음
 
-**PixelGen은 배관이 다름.** Algorithm 1(p.15)의 `xθ = netθ(xt,t,c)`에서 보듯 **pixel
+**PixelGen은 파이프라인이 다름.** Algorithm 1(p.15)의 `xθ = netθ(xt,t,c)`에서 보듯 **pixel
 diffusion + x-prediction**이라 LPIPS 그래디언트가 출력에 직행함. 우리는 latent +
 v-prediction이라 `(−σ) × VAE decoder Jacobian`을 경유하고 matte 마스킹(`losses.py:107-108`,
 머리를 검은 배경에 오려붙여 VGG에 투입)까지 붙음. 분모도 pixel L2 vs
@@ -239,7 +248,7 @@ latent L2/`s≈37`(`losses.py:272-274`)로 다름. 실제로 `λ1=0.1`을 그대
 문턱도 `timeshift=1.0` 전제라, `shift=3.0`인 우리에게 `σ≤0.7`은 스케줄 기준 마지막
 **43.75%**(샘플 40%)이지 PixelGen의 70%가 아님.
 
-**LPL은 배관이 맞는 유일한 선례임** — [arXiv:2411.04873](https://arxiv.org/abs/2411.04873),
+**LPL은 파이프라인이 맞는 유일한 선례임** — [arXiv:2411.04873](https://arxiv.org/abs/2411.04873),
 latent diffusion + VAE decoder 경유 + ε/v/flow 전부에서 검증, `[0801]loss.md` §2-T1의 1순위
 후보. `w_LPL≈3.0`으로 저자 표현상 **"전체 loss의 약 1/5 기여"**, 게이트는 SNR 문턱
 `τ_σ∈[3,6]`. 그러나 우리 σ 분포에 대입하면 `τ_σ=3 → σ≤0.366`(통과율 4.95%),
@@ -274,14 +283,3 @@ latent diffusion + VAE decoder 경유 + ε/v/flow 전부에서 검증, `[0801]lo
 아님. ② (b)의 1.18 추정은 decoder Jacobian이 σ에 무관하다고 본 값으로, PixelGen
 Appendix A Fig.6(b)에 따르면 noise-gate 쪽에 유리하게 편향돼 있음. ③ 평가셋 8장이고, 방향
 지표만으로는 frizz와 sharpness를 구별하지 못하므로 `R`을 올릴 때 정성 관찰이 필요함.
-
-### 3.4 결론
-
-1. `run5_2`의 densify 조건은 방향 오차·coherence·seed 불일치 모두에서 열화됨.
-2. `run5_1` 조건은 방향 지표상 run4보다 개선됨. 다만 게이트 위치와 누적 LPIPS 노출량(5배)이
-   함께 바뀐 것이므로, 개선을 게이트 위치 단독 효과로 귀속할 수 없음.
-3. 따라서 run5의 노이즈·머릿결 엉킴은 noise-gate보다 densification과 더 강하게 연관됨.
-   두 변수는 가법적이지 않고, densify의 손상은 LPIPS 노출이 늘어난 조건에서 약 2배로 커짐.
-4. DensifyAug 내부의 구체적 원인은 추가 통제 실험 없이는 확정할 수 없음.
-5. LPIPS의 최적 가중치도 미확정이며, 지금까지 밟아본 실효 세기는 `R≈0.02`와 `R≈1.0` 두 점뿐임.
-   그 사이 구간은 게이트 도입 이후 한 번도 평가되지 않음(§3.3-c).
