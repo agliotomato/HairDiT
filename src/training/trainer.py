@@ -140,6 +140,10 @@ class Trainer:
             # 2026-08-05: LPIPS is gated by per-sample noise/timestep rather
             # than by training progress. Keep the cutoff explicit in config.
             lpips_noise_cutoff=config["training"]["loss_weights"].get("lpips_noise_cutoff", 0.7),
+            # 2026-08-06 (run5_2): run4의 step-warmup 게이트를 되살리는 토글.
+            # 기본값 "noise"라 run5까지의 config는 거동이 그대로다.
+            lpips_gate=config["training"]["loss_weights"].get("lpips_gate", "noise"),
+            lpips_warmup_frac=config["training"]["loss_weights"].get("lpips_warmup_frac", 0.3),
             scale_sync=config["training"]["loss_weights"].get("scale_sync", True),
             s_min=config["training"]["loss_weights"].get("s_min", 20.0),
             s_max=config["training"]["loss_weights"].get("s_max", 120.0),

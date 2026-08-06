@@ -1,0 +1,93 @@
+# configs/run5_1_noisegate_phase1.yaml — run5_1: densify OFF + LPIPS noise-gate ON
+#
+# run5(configs/densification_phase1.yaml)의 전체 복사본에서 **두 줄만** 바꾼 파일이다.
+#   ① training.densify.enabled: true → false
+#   ② checkpointing.output_dir      (run5 체크포인트 덮어쓰기 방지)
+# 그 외는 run5와 한 글자도 다르지 않다. base.yaml에는 model 블록도 batch_size도 없으므로
+# "바뀐 키만 적는" 축약본으로 쓰면 batch_size가 기본값 4로 떨어진다 — 전체를 명시한다.
+#
+# 목적 (교수님 지시, 2026-08-06): run5는 밀도증강 + LPIPS 게이트 2변수를 동시에 바꿔
+# 열화 원인을 귀속시킬 수 없었다(reports/[0805]run5_results.md §3-2). 두 변수를 분리한다.
+#
+#   run5_1(이 파일) = densify OFF + noise-gate ON   → run4 대비 1변수(게이트)만 다름
+#   run5_2          = densify ON  + warmup(30%)     → run4 대비 1변수(데이터)만 다름
+#
+# 2x2 완전요인:
+#                  densify OFF   densify ON
+#   warmup            run4         run5_2
+#   noise-gate        run5_1       run5
+#   → 교호작용 = (run5 - run5_1) vs (run5_2 - run4)
+#
+# 🔴 코드 변경 없음. densify.enabled=false 이면 build_augmentation_pipeline이
+#    run4와 완전히 동일한 파이프라인을 반환하고(src/data/augmentation.py:330-346),
+#    ComposeAug.set_epoch은 DensifyAug가 없어 no-op이다(같은 파일:306-310).
+#    batch에 densify_t 키가 없으므로 해당 로깅도 자동으로 빠진다(trainer.py:721-724).
+base: configs/base.yaml
+
+# 아래 model 블록은 현재 trainer 기본값과 값이 같지만(trainer.py:224-229), run4/run5와의
+# 아키텍처 동일성이 이 실험의 전제이므로 기본값에 의존하지 않고 명시한다(32ch = 16 latent + 16 raw anchor).
+model:
+  zero_matte_cond: false
+  zero_matte_feat: false
+  zero_raw_matte: false
+  num_extra_conditioning_channels: 16
+  matte_bias_zero_init: true
+  use_matte_scale: true
+
+training:
+  phase: pretrain            # edge off, LPIPS timestep gate (edge는 finetune에서만 켜짐)
+  dataset: unbraid           # unbraid 3000 → 187 step/epoch (run4/run5와 동일)
+  epochs: 40                 # ⚠️ 15로 줄이지 말 것: cosine LR T_max가 이 값에 묶여 있어
+                             #    (trainer.py:393-403) 15로 바꾸면 LR 감쇠가 압축돼 run4/run5와의 비교가 깨진다.
+                             #    40으로 두고 epoch 15에서 "수동 중단"한다.
+  batch_size: 16             # 누락 금지(기본값 4) — s≈37 전제가 깨짐
+  learning_rate: 1.0e-4
+  warmup_steps: 500
+  mode: forward
+  schedule: all
+  gate_alpha: 1.0
+  resume: null
+  early_stopping: false      # run5와 동일. dE_unbraid 3-epoch 정체 시 조기종료되면 epoch 15
+                             # 도달 전에 멈춰 run5와의 동일epoch 비교가 깨진다.
+                             # (run4는 이 키가 없어 기본 True였으나 epoch 30까지 갔으므로 미발동 —
+                             #  1~15 구간의 거동 차이는 없다.)
+
+  loss_weights:
+    flow: 1.0
+    lpips: 0.002              # run4/run5와 동일
+    edge: 0.0                 # pretrain
+    # PixelGen noise gate (논문 Eq.9, tau=0.3) — run5와 동일하게 유지한다.
+    # ⚠️ 활성되는 것은 timestep 구간의 하위 70%이지 "샘플의 70%"가 아니다.
+    #    HairDiT의 logit-normal+shift=3.0 샘플링에서 실제 활성 샘플은 약 40%(run5 실측 0.4026).
+    lpips_noise_cutoff: 0.7
+    scale_sync: true
+    s_min: 20.0
+    s_max: 120.0
+
+  # ★ run5 대비 유일한 실질 변경점. densification을 끈다.
+  #   enabled=false 이면 mask_root/thresholds는 읽히지 않지만(augmentation.py:333),
+  #   "무엇을 껐는지"를 남기기 위해 값은 그대로 둔다. 마스크 사전 생성도 불필요하다.
+  densify:
+    enabled: false
+    mask_root: data/densify_masks
+    thresholds: [null, 21, 15, 12]
+
+checkpointing:
+  # 🔴 densification_phase1/ 로 두면 run5 체크포인트를 같은 파일명으로 경고 없이 덮어쓴다
+  #    (trainer.py:154는 mkdir만 하고 존재 검사가 없다).
+  output_dir: checkpoints/run5_1_noisegate/
+  eval_every: 10              # flow val (참고용) — run4/run5와 동일
+  perceptual_every: 1         # perceptual val 매 epoch — 중단 판단 신호
+  save_every: 5               # run4/run5와 같은 저장 격자(5/10/15)를 유지해 동일epoch 비교가 가능하게 함.
+
+# ⚠️ 판정에 best.pth를 쓰지 말 것.
+#   trainer의 phase1 best 선정·조기종료 트리거는 모두 dE_unbraid(색) 기준이다(trainer.py:522-537).
+#   방향 정렬 판정은 epoch_N.pth로 해야 한다.
+
+# 착수 직후 필수 확인 — 벗어나면 즉시 중단:
+#   - step ~10:        lpips_active_fraction ≈ 0.40 ± 0.03   (run5 실측 0.4026)
+#   - 전 구간:         densify_t 로그 키가 아예 없어야 한다   (있으면 densify가 안 꺼진 것)
+#   - step ~100, ~200: R_lpips ∈ [0.015, 0.030]  (run4 실측 0.0178~0.0280 / run5 실측 중앙 0.0246)
+#   - 전 구간:         s_raw 28~51, clamp_hi/clamp_lo 0%   (run4 실측 밴드)
+#   - 소요: LPIPS가 1 epoch부터 상시 활성이므로 3.16 s/it × 187 step ≈ 10분/epoch
+#           → 15 epoch ≈ 2.5h + 매 epoch perceptual val 오버헤드 (run5와 동일)

@@ -1,0 +1,113 @@
+# configs/run5_2_densify_phase1.yaml — run5_2: densify ON + LPIPS epoch-warmup(30%) ON
+#
+# run5(configs/densification_phase1.yaml)의 전체 복사본에서 **게이트와 output_dir만** 바꾼 파일이다.
+#   ① loss_weights.lpips_noise_cutoff(noise-gate) → lpips_gate: warmup + lpips_warmup_frac: 0.3
+#      (= run4 as-run 게이트. configs/lpips_low_phase1.yaml:41과 같은 값)
+#   ② checkpointing.output_dir  (run5 체크포인트 덮어쓰기 방지)
+# 그 외는 run5와 한 글자도 다르지 않다. base.yaml에는 model 블록도 batch_size도 없으므로
+# "바뀐 키만 적는" 축약본으로 쓰면 batch_size가 기본값 4로 떨어진다 — 전체를 명시한다.
+#
+# 목적 (교수님 지시, 2026-08-06): run5는 밀도증강 + LPIPS 게이트 2변수를 동시에 바꿔
+# 열화 원인을 귀속시킬 수 없었다(reports/[0805]run5_results.md §3-2). 두 변수를 분리한다.
+#
+#   run5_1 = densify OFF + noise-gate ON   → run4 대비 1변수(게이트)만 다름
+#   run5_2(이 파일) = densify ON + warmup  → run4 대비 1변수(데이터)만 다름  ★ 핵심 질문
+#
+# 2x2 완전요인:
+#                  densify OFF   densify ON
+#   warmup            run4         run5_2
+#   noise-gate        run5_1       run5
+#   → 교호작용 = (run5 - run5_1) vs (run5_2 - run4)
+#
+# 🔴 이 config는 코드 변경을 전제로 한다.
+#    커밋 d4445be가 losses.py의 step-warmup 분기를 삭제해서, 현재 `lpips_warmup_frac`을
+#    읽는 파이썬 코드가 하나도 없다. `lpips_gate` 토글을 복원하지 않고 이 config를 돌리면
+#    게이트가 조용히 noise-gate로 돌아가 run5의 반복 실행이 되어버린다.
+#    → 착수 전 아래 "필수 확인"의 lpips_active_fraction 값으로 반드시 검증할 것.
+base: configs/base.yaml
+
+# 아래 model 블록은 현재 trainer 기본값과 값이 같지만(trainer.py:224-229), run4/run5와의
+# 아키텍처 동일성이 이 실험의 전제이므로 기본값에 의존하지 않고 명시한다(32ch = 16 latent + 16 raw anchor).
+model:
+  zero_matte_cond: false
+  zero_matte_feat: false
+  zero_raw_matte: false
+  num_extra_conditioning_channels: 16
+  matte_bias_zero_init: true
+  use_matte_scale: true
+
+training:
+  phase: pretrain            # edge off, LPIPS warmup (edge는 finetune에서만 켜짐)
+  dataset: unbraid           # unbraid 3000 → 187 step/epoch (run4/run5와 동일)
+  epochs: 40                 # ⚠️ 15로 줄이지 말 것. 이 config에서는 두 가지가 이 값에 묶여 있다:
+                             #    ① cosine LR T_max (trainer.py:393-403)
+                             #    ② LPIPS 활성 시점 = lpips_warmup_frac × epochs × 187
+                             #    15로 바꾸면 LPIPS가 epoch 5에 켜져 run4와의 1변수 비교가 깨진다.
+                             #    40으로 두고 epoch 15에서 "수동 중단"한다.
+  batch_size: 16             # 누락 금지(기본값 4) — s≈37 전제가 깨짐
+  learning_rate: 1.0e-4
+  warmup_steps: 500
+  mode: forward
+  schedule: all
+  gate_alpha: 1.0
+  resume: null
+  early_stopping: false      # run5와 동일. dE_unbraid 3-epoch 정체 시 조기종료되면 epoch 15
+                             # 도달 전에 멈춰 "epoch15 = T15 밀도 종료" 계획과 동일epoch 비교가 깨진다.
+                             # (run4는 이 키가 없어 기본 True였으나 epoch 30까지 갔으므로 미발동 —
+                             #  1~15 구간의 거동 차이는 없다.)
+
+  loss_weights:
+    flow: 1.0
+    lpips: 0.002              # run4/run5와 동일. 게이트가 바뀌어도 재보정하지 않는다 —
+                              # 재보정하면 run4 대비 2변수가 되어 이 실험의 목적이 무너진다.
+    edge: 0.0                 # pretrain
+    # ★ run5 대비 유일한 실질 변경점. run4의 step-warmup 게이트로 되돌린다.
+    #   warmup 모드는 run4와 동일하게 **배치 단위 on/off이고 LPIPS를 전체 배치에 건다**
+    #   (noise-gate처럼 활성 부분집합만 뽑지 않는다).
+    #   활성 시점 = int(0.3 × 40 × 187) = step 2244 = epoch 13 시작.
+    #   → epoch 15에서 끊으면 LPIPS가 걸리는 건 epoch 13/14/15 3개뿐이다(run4와 동일).
+    #   ⚠️ 그 3개 epoch의 밀도는 라운드로빈상 ∞(ep13) / T21(ep14) / T15(ep15)이다 —
+    #      즉 이 run에서 LPIPS는 T12 밀도를 한 번도 보지 않는다. 게이트 정의상 불가피한
+    #      귀결이며 "warmup 게이트 + 밀도증강"의 실제 모습이므로 리포트에 명시할 것.
+    lpips_gate: warmup
+    lpips_warmup_frac: 0.3
+    # base.yaml이 lpips_noise_cutoff: 0.7 을 내려보내지만 lpips_gate=warmup 에서는
+    # 읽히지 않는다(deep_merge라 키 자체는 병합됨). 혼동 방지를 위해 여기 재선언하지 않는다.
+    scale_sync: true
+    s_min: 20.0
+    s_max: 120.0
+
+  # run5와 동일 — 밀도 혼합 증강 유지.
+  #   epoch마다 threshold 하나를 확정해 그 epoch의 전 샘플에 동일 적용(샘플별 무작위 아님).
+  #   null = ∞(원본 sketch). 라운드로빈: ∞ → T21 → T15 → T12 → 반복. epoch15 = T15(= 추론 작동점).
+  #   ⚠️ 마스크는 scripts/preprocess/densify_shs.py masks 로 사전 생성돼 있어야 한다.
+  #      run5가 쓴 data/densify_masks 를 그대로 재사용한다(재생성 불필요 — 기하는 색과 무관).
+  densify:
+    enabled: true
+    mask_root: data/densify_masks
+    thresholds: [null, 21, 15, 12]
+
+checkpointing:
+  # 🔴 densification_phase1/ 로 두면 run5 체크포인트를 같은 파일명으로 경고 없이 덮어쓴다
+  #    (trainer.py:154는 mkdir만 하고 존재 검사가 없다).
+  output_dir: checkpoints/run5_2_densify/
+  eval_every: 10              # flow val (참고용) — run4/run5와 동일
+  perceptual_every: 1         # perceptual val 매 epoch — 중단 판단 신호
+  save_every: 5               # run4/run5와 같은 저장 격자(5/10/15)를 유지해 동일epoch 비교가 가능하게 함.
+                              # ⚠️ 저장 시점의 밀도가 갈린다: ep5=∞ / ep10=T21 / ep15=T15 (run5와 동일).
+
+# ⚠️ 판정에 best.pth를 쓰지 말 것.
+#   trainer의 phase1 best 선정·조기종료 트리거는 모두 dE_unbraid(색) 기준이다(trainer.py:522-537).
+#   방향 정렬 판정은 epoch_N.pth로 해야 한다.
+
+# 착수 직후 필수 확인 — 벗어나면 즉시 중단:
+#   - step ~10:        lpips_active_fraction == 0.0   ★ 게이트 복원 검증의 핵심.
+#                      0.40 근처가 나오면 lpips_gate 토글이 안 먹은 것(= run5 재실행)이므로 즉시 중단.
+#   - step ~10:        densify_t = 0        (epoch 0 = ∞)
+#   - step 2244 직후:  lpips_active_fraction == 1.0, loss_lpips 키 등장
+#   - step 2300 부근:  R_lpips ∈ [0.015, 0.030]  (run4 실측 0.0178~0.0280)
+#                      ⚠️ R_lpips는 LPIPS 활성 전에는 아예 계산되지 않는다(losses.py:324) —
+#                        epoch 1~12에 이 키가 없는 것이 정상이다.
+#   - 전 구간:         s_raw 28~51, clamp_hi/clamp_lo 0%   (run4 실측 밴드)
+#   - 소요: epoch 1~12는 LPIPS 비활성이라 VAE decode가 없어 빠르다 → run4와 동일하게
+#           15 epoch ≈ 2.1h (run5의 2.5h보다 짧은 것이 정상)

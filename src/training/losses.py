@@ -182,6 +182,15 @@ class HairLoss(nn.Module):
                             *range* — the PixelGen noise gate g(t)=1[t>=0.3]
                             (paper Eq. 9) under their x_t = t*x + (1-t)*eps,
                             i.e. their t equals our (1 - sigma).
+                            Only read when lpips_gate == "noise".
+        lpips_gate:        which LPIPS activation rule to use (run5_2 ablation).
+                            "noise"  = per-sample noise gate (run5, default —
+                                       every existing config keeps its behaviour)
+                            "warmup" = run4's batch-level step warmup; LPIPS is
+                                       applied to the *whole* batch once
+                                       current_step >= lpips_warmup_frac * total_steps
+        lpips_warmup_frac: fraction of total steps before LPIPS activates.
+                            Only read when lpips_gate == "warmup" (pretrain only).
         scale_sync:        divide the flow term by s=clamp(numel(v_pred)/‖matte_latent‖₁, s_min, s_max)
                             to sync its gradient scale with lpips/edge (default True)
         s_min, s_max:       clamp range for s (default 20.0 / 120.0)
@@ -194,17 +203,23 @@ class HairLoss(nn.Module):
         w_lpips: float = 0.1,
         w_edge: float = 0.05,
         lpips_noise_cutoff: float = 0.7,
+        lpips_gate: str = "noise",
+        lpips_warmup_frac: float = 0.3,
         scale_sync: bool = True,
         s_min: float = 20.0,
         s_max: float = 120.0,
     ):
         super().__init__()
         assert phase in ("pretrain", "finetune"), f"Unknown phase: {phase}"
+        if lpips_gate not in ("noise", "warmup"):
+            raise ValueError(f"lpips_gate must be 'noise' or 'warmup', got {lpips_gate!r}")
         self.phase = phase
         self.w_flow = w_flow
         self.w_lpips = w_lpips
         self.w_edge = w_edge
         self.lpips_noise_cutoff = lpips_noise_cutoff
+        self.lpips_gate = lpips_gate
+        self.lpips_warmup_frac = lpips_warmup_frac
         self.scale_sync = scale_sync
         self.s_min, self.s_max = s_min, s_max
 
@@ -280,15 +295,32 @@ class HairLoss(nn.Module):
         # "limited effect" and tau=0.6 (our 0.4) at "substantially hurts".
         # The mask is per sample, not per batch, because a batch can contain
         # multiple sigma values.
-        if not 0.0 < self.lpips_noise_cutoff <= 1.0:
-            raise ValueError(
-                f"lpips_noise_cutoff must be in (0, 1], got {self.lpips_noise_cutoff}"
+        #
+        # 2026-08-06 (run5_2 ablation): run5 changed the data (density mix) and
+        # this gate at the same time, so its regression cannot be attributed to
+        # either one. `lpips_gate` restores run4's step-warmup as a config
+        # toggle so the two variables can be separated in a 2x2 design. The default
+        # stays "noise", i.e. every config written up to run5 is unaffected.
+        if self.lpips_gate == "warmup":
+            # run4 semantics: batch-level on/off, LPIPS over the FULL batch.
+            # A None mask downstream means "no subsetting" — do not build an
+            # all-True mask here, that would silently change perc_loss input.
+            lpips_sample_mask = None
+            lpips_active = (
+                self.phase == "finetune"
+                or current_step >= int(self.lpips_warmup_frac * total_steps)
             )
-        lpips_sample_mask = sigmas.view(-1).float() <= self.lpips_noise_cutoff if sigmas is not None else None
-        lpips_active = bool(lpips_sample_mask is not None and lpips_sample_mask.any())
-        loss_dict["lpips_active_fraction"] = (
-            float(lpips_sample_mask.float().mean()) if lpips_sample_mask is not None else 0.0
-        )
+            loss_dict["lpips_active_fraction"] = float(lpips_active)
+        else:
+            if not 0.0 < self.lpips_noise_cutoff <= 1.0:
+                raise ValueError(
+                    f"lpips_noise_cutoff must be in (0, 1], got {self.lpips_noise_cutoff}"
+                )
+            lpips_sample_mask = sigmas.view(-1).float() <= self.lpips_noise_cutoff if sigmas is not None else None
+            lpips_active = bool(lpips_sample_mask is not None and lpips_sample_mask.any())
+            loss_dict["lpips_active_fraction"] = (
+                float(lpips_sample_mask.float().mean()) if lpips_sample_mask is not None else 0.0
+            )
 
         l_lpips = None
         l_edge = None
@@ -303,12 +335,16 @@ class HairLoss(nn.Module):
 
             if target_rgb is not None and matte is not None and lpips_active:
                 target_rgb_11 = VAEWrapper.normalize(target_rgb)
-                active = lpips_sample_mask
-                l_lpips = self.perc_loss(
-                    pred_rgb_11[active],
-                    target_rgb_11[active],
-                    matte[active],
-                )
+                if lpips_sample_mask is None:
+                    # warmup gate (run4): no per-sample subsetting.
+                    l_lpips = self.perc_loss(pred_rgb_11, target_rgb_11, matte)
+                else:
+                    active = lpips_sample_mask
+                    l_lpips = self.perc_loss(
+                        pred_rgb_11[active],
+                        target_rgb_11[active],
+                        matte[active],
+                    )
                 total_loss = total_loss + self.w_lpips * l_lpips
                 loss_dict["loss_lpips"] = l_lpips.item()
 
