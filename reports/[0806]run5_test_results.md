@@ -20,13 +20,15 @@ epoch 15 · seed 42 고정, `data/test` 5장(CM_1027 / CM_1067 / CM_1082 / CM_10
 
 | image | 스케치 | run4 | run5 | run5_1 | run5_2 |
 |---|---|---|---|---|---|
-| CM_1027 | ![sketch CM_1027](../data/test/sketch/CM_1027.png) | ![run4 CM_1027](../outputs/0806/run4/42/epoch15/CM_1027.png) | ![run5 CM_1027](../outputs/0806/run5/42/epoch15/CM_1027.png) | ![run5_1 CM_1027](../outputs/0806/run5_1/42/epoch15/CM_1027.png) | ![run5_2 CM_1027](../outputs/0806/run5_2/42/epoch15/CM_1027.png) |
-| CM_1067 | ![sketch CM_1067](../data/test/sketch/CM_1067.png) | ![run4 CM_1067](../outputs/0806/run4/42/epoch15/CM_1067.png) | ![run5 CM_1067](../outputs/0806/run5/42/epoch15/CM_1067.png) | ![run5_1 CM_1067](../outputs/0806/run5_1/42/epoch15/CM_1067.png) | ![run5_2 CM_1067](../outputs/0806/run5_2/42/epoch15/CM_1067.png) |
-| CM_1082 | ![sketch CM_1082](../data/test/sketch/CM_1082.png) | ![run4 CM_1082](../outputs/0806/run4/42/epoch15/CM_1082.png) | ![run5 CM_1082](../outputs/0806/run5/42/epoch15/CM_1082.png) | ![run5_1 CM_1082](../outputs/0806/run5_1/42/epoch15/CM_1082.png) | ![run5_2 CM_1082](../outputs/0806/run5_2/42/epoch15/CM_1082.png) |
-| CM_1033 | ![sketch CM_1033](../data/test/sketch/CM_1033.png) | ![run4 CM_1033](../outputs/0806/run4/42/epoch15/CM_1033.png) | ![run5 CM_1033](../outputs/0806/run5/42/epoch15/CM_1033.png) | ![run5_1 CM_1033](../outputs/0806/run5_1/42/epoch15/CM_1033.png) | ![run5_2 CM_1033](../outputs/0806/run5_2/42/epoch15/CM_1033.png) |
-| CM_1068 | ![sketch CM_1068](../data/test/sketch/CM_1068.png) | ![run4 CM_1068](../outputs/0806/run4/42/epoch15/CM_1068.png) | ![run5 CM_1068](../outputs/0806/run5/42/epoch15/CM_1068.png) | ![run5_1 CM_1068](../outputs/0806/run5_1/42/epoch15/CM_1068.png) | ![run5_2 CM_1068](../outputs/0806/run5_2/42/epoch15/CM_1068.png) |
+| CM_1027 | ![sketch CM_1027](../data/test/recolor_sketch/CM_1027.png) | ![run4 CM_1027](../outputs/0806/run4/42/epoch15/CM_1027.png) | ![run5 CM_1027](../outputs/0806/run5/42/epoch15/CM_1027.png) | ![run5_1 CM_1027](../outputs/0806/run5_1/42/epoch15/CM_1027.png) | ![run5_2 CM_1027](../outputs/0806/run5_2/42/epoch15/CM_1027.png) |
+| CM_1067 | ![sketch CM_1067](../data/test/recolor_sketch/CM_1067.png) | ![run4 CM_1067](../outputs/0806/run4/42/epoch15/CM_1067.png) | ![run5 CM_1067](../outputs/0806/run5/42/epoch15/CM_1067.png) | ![run5_1 CM_1067](../outputs/0806/run5_1/42/epoch15/CM_1067.png) | ![run5_2 CM_1067](../outputs/0806/run5_2/42/epoch15/CM_1067.png) |
+| CM_1082 | ![sketch CM_1082](../data/test/recolor_sketch/CM_1082.png) | ![run4 CM_1082](../outputs/0806/run4/42/epoch15/CM_1082.png) | ![run5 CM_1082](../outputs/0806/run5/42/epoch15/CM_1082.png) | ![run5_1 CM_1082](../outputs/0806/run5_1/42/epoch15/CM_1082.png) | ![run5_2 CM_1082](../outputs/0806/run5_2/42/epoch15/CM_1082.png) |
+| CM_1033 | ![sketch CM_1033](../data/test/recolor_sketch/CM_1033.png) | ![run4 CM_1033](../outputs/0806/run4/42/epoch15/CM_1033.png) | ![run5 CM_1033](../outputs/0806/run5/42/epoch15/CM_1033.png) | ![run5_1 CM_1033](../outputs/0806/run5_1/42/epoch15/CM_1033.png) | ![run5_2 CM_1033](../outputs/0806/run5_2/42/epoch15/CM_1033.png) |
+| CM_1068 | ![sketch CM_1068](../data/test/recolor_sketch/CM_1068.png) | ![run4 CM_1068](../outputs/0806/run4/42/epoch15/CM_1068.png) | ![run5 CM_1068](../outputs/0806/run5/42/epoch15/CM_1068.png) | ![run5_1 CM_1068](../outputs/0806/run5_1/42/epoch15/CM_1068.png) | ![run5_2 CM_1068](../outputs/0806/run5_2/42/epoch15/CM_1068.png) |
 
-※ 입력 스케치는 `data/test/sketch`(densify 미적용 원본)이며, densify는 학습 시 입력 증강으로만 적용됐다.
+※ 입력 스케치는 `data/test/recolor_sketch` — 네 run의 추론에 실제로 conditioning으로 들어간 그 이미지다
+(`[0805]results.md` §2의 `infer_custom.py --sketch data/test/recolor_sketch`). densify 미적용 원본이며,
+densify는 학습 시 입력 증강으로만 적용됐다.
 ※ run5_1은 `epoch15`와 `epoch15_infer` 산출물이 동일해(해시 일치) `epoch15` 디렉터리를 사용했다.
 
 ### 1.2 seed별 비교
@@ -102,14 +104,12 @@ matte 내부의 structure tensor **방향**만 coherence 가중으로 측정한 
 | CM_1084 | 19.92 / 19.55 | 22.75 / 23.69 | **17.59 / 17.43** | 22.41 / 21.38 |
 | CM_1172 | 26.61 / 9.54 | 26.73 / 11.28 | **26.59 / 8.66** | 26.93 / 11.23 |
 
-표의 각 셀은 `GT 오차 / seed 불일치 [deg]`이다. run5_1 epoch10 seed42 렌더는
-`epoch10_infer` 산출물을 사용했으며, 나머지는 해당 epoch 디렉터리의 이미지를 사용했다.
 
 ### 2-3. 해석
 
 - epoch15 기준 `run5_1`은 run4보다 GT 오차가 **19.29 → 18.10°**, seed 불일치가
   **15.80 → 14.09°**로 모두 낮고, coherence도 **0.761 → 0.770**으로 높다. 따라서
-  densify를 끈 상태에서 noise-gate를 적용한 run5_1은 방향 안정성 측면에서 악화되지 않았다.
+  densify를 끈 상태에서 noise-gate를 적용한 run5_1은 방향 안정성 측면에서 오히려 안정되었다
 - `run5_2`는 run4 대비 epoch15에서 GT 오차가 **19.29 → 20.57°**, coherence가
   **0.761 → 0.724**, seed 불일치가 **15.80 → 17.98°**로 악화됐다.
 - 따라서 이번 8장·4 seed 평가에서는 **run5_2의 열화가 densify 축에서 재현**됐다. 반면
