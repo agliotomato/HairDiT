@@ -299,4 +299,9 @@ latent diffusion + VAE decoder 경유 + ε/v/flow 전부에서 검증, `w_LPL≈
 아님. ② (b)의 1.18 추정은 decoder Jacobian이 σ에 무관하다고 본 값으로, PixelGen
 Appendix A Fig.6(b)에 따르면 noise-gate 쪽에 유리하게 편향돼 있음. ③ 평가셋 8장이고, 방향
 지표만으로는 frizz와 sharpness를 구별하지 못하므로 `R`을 올릴 때 정성 관찰이 필요함.
-
+④ 이 스윕에서 seed 불일치가 줄어들더라도, sparse stroke 사이 방향을 초기 noise와 모델
+prior가 정하는 메커니즘(`[0803]seed_test.md` §6)을 해결했다는 뜻은 아님 — LPIPS는 방향을
+명시적으로 재는 항이 아니라 마스크 전체의 texture 유사도를 재는 항이라, 개선이 있어도
+"출력이 GT 쪽으로 덜 흔들리는" 간접 효과로 해석해야 함. 실제로 run4(R≈0.02로 frizz를
+해결한 조건)에서도 이 문제는 남았음(`[0803]seed_test.md` §6: "LPIPS 조정은 푸석거림을
+개선했지만 방향성 문제는 seed에 따라 여전히 나타남"). 
