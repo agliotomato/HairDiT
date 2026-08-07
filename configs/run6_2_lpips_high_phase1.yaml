@@ -1,0 +1,112 @@
+# configs/run6_2_lpips_high_phase1.yaml — run6_2: densify OFF + noise-gate, w_lpips 0.022 (R≈0.30)
+#
+# run5_1(configs/run5_1_noisegate_phase1.yaml)의 전체 복사본에서 **두 줄만** 바꾼 파일이다.
+#   ① loss_weights.lpips: 0.002 → 0.022
+#   ② checkpointing.output_dir      (run5_1 체크포인트 덮어쓰기 방지)
+# 그 외는 run5_1과 한 글자도 다르지 않다. base.yaml에는 model 블록도 batch_size도 없으므로
+# "바뀐 키만 적는" 축약본으로 쓰면 batch_size가 기본값 4로 떨어진다 — 전체를 명시한다.
+#
+# 목적 (교수님 지시, 2026-08-07): "게이트 고정, 세기만 스윕"을 두 값에 대해 동시 진행
+# (reports/[0806]run5_test_results.md §3.3-e). 게이트는 run5_1 그대로 두고 w_lpips만 움직인다.
+#
+#   run6_1          = w 0.0075 → 목표 R≈0.10   (현행 3.7배, 안전한 첫 걸음)
+#   run6_2(이 파일) = w 0.022  → 목표 R≈0.30   ([0729] ②구간, LPL "1/5 기여" 근접)
+#
+# 왜 스윕인가 (§3.3-c): 지금까지 밟아본 실효 세기는 run3의 R≈1.016(frizz 발생)과
+# run4/run5_1의 R≈0.02(frizz 소멸, 대신 가닥 뭉개짐) 두 점뿐이고 그 사이 50배 구간이
+# 비어 있다. [0729]retrain_plan_v2.md §2-2가 R=0.2~0.5를 선택지 ②로 적어두고 미뤘던 구간이다.
+#
+# 🔴 두 run 중 공격적인 쪽이다. R≈0.30은 run3의 frizz 지점(R≈1.016)까지 3.4배 거리이고,
+#    LPL(arXiv:2411.04873)이 보고한 "전체 loss의 약 1/5 기여"에 가장 근접한 조건이다.
+#    frizz가 재발할 수 있는 구간이므로 정성 관찰을 특히 자주 할 것(아래 판정 항목).
+#
+# 🔴 코드 변경 없음. lpips_gate는 기본값 "noise"를 그대로 쓰므로 run5_1과 동일 경로다.
+#    R은 w에 선형이므로 run5_1 실측(w=0.002 → R=0.0268)에서 환산했다.
+base: configs/base.yaml
+
+# 아래 model 블록은 현재 trainer 기본값과 값이 같지만(trainer.py:224-229), run4/run5_1과의
+# 아키텍처 동일성이 이 실험의 전제이므로 기본값에 의존하지 않고 명시한다(32ch = 16 latent + 16 raw anchor).
+model:
+  zero_matte_cond: false
+  zero_matte_feat: false
+  zero_raw_matte: false
+  num_extra_conditioning_channels: 16
+  matte_bias_zero_init: true
+  use_matte_scale: true
+
+training:
+  phase: pretrain            # edge off, LPIPS timestep gate (edge는 finetune에서만 켜짐)
+  dataset: unbraid           # unbraid 3000 → 187 step/epoch (run4/run5_1과 동일)
+  epochs: 40                 # ⚠️ 15로 줄이지 말 것: cosine LR T_max가 이 값에 묶여 있어
+                             #    (trainer.py:393-403) 15로 바꾸면 LR 감쇠가 압축돼 run5_1과의 비교가 깨진다.
+                             #    40으로 두고 epoch 15에서 "수동 중단"한다.
+  batch_size: 16             # 누락 금지(기본값 4) — s≈37 전제가 깨짐
+  learning_rate: 1.0e-4
+  warmup_steps: 500
+  mode: forward
+  schedule: all
+  gate_alpha: 1.0
+  resume: null
+  early_stopping: false      # run5_1과 동일. dE_unbraid 3-epoch 정체 시 조기종료되면 epoch 15
+                             # 도달 전에 멈춰 run5_1과의 동일epoch 비교가 깨진다.
+
+  loss_weights:
+    flow: 1.0
+    # ★ run5_1 대비 유일한 실질 변경점. R = w에 선형이므로 0.002→0.022는 R 0.027→0.30.
+    #   ⚠️ 이 스윕의 목적상 w 외에는 아무것도 바꾸지 않는다. 정규화 규약(활성 부분집합 평균)도
+    #      그대로 둔다 — 실효 세기를 바꾸지 않는 재매개화라 변수만 늘어난다(§3.3-e).
+    lpips: 0.022
+    edge: 0.0                 # pretrain
+    # PixelGen noise gate (논문 Eq.9, tau=0.3) — run5_1과 동일하게 유지한다. ★ 이 축은 고정.
+    # ⚠️ 활성되는 것은 timestep 구간의 하위 70%이지 "샘플의 70%"가 아니다.
+    #    HairDiT의 logit-normal+shift=3.0 샘플링에서 실제 활성 샘플은 약 40%(run5 실측 0.4026).
+    lpips_noise_cutoff: 0.7
+    scale_sync: true
+    s_min: 20.0
+    s_max: 120.0
+
+  # run5_1과 동일 — densification은 끈 상태를 유지한다(이 스윕은 densify OFF 조건에서만 돈다).
+  #   enabled=false 이면 mask_root/thresholds는 읽히지 않지만(augmentation.py:333),
+  #   "무엇을 껐는지"를 남기기 위해 값은 그대로 둔다. 마스크 사전 생성도 불필요하다.
+  densify:
+    enabled: false
+    mask_root: data/densify_masks
+    thresholds: [null, 21, 15, 12]
+
+checkpointing:
+  # 🔴 run5_1_noisegate/ 로 두면 run5_1 체크포인트를 같은 파일명으로 경고 없이 덮어쓴다
+  #    (trainer.py:154는 mkdir만 하고 존재 검사가 없다).
+  output_dir: checkpoints/run6_2_lpips_high/
+  eval_every: 10              # flow val (참고용) — run4/run5_1과 동일
+  perceptual_every: 1         # perceptual val 매 epoch — 중단 판단 신호
+  save_every: 5               # run4/run5_1과 같은 저장 격자(5/10/15)를 유지해 동일epoch 비교가 가능하게 함.
+
+# ⚠️ 판정에 best.pth를 쓰지 말 것.
+#   trainer의 phase1 best 선정·조기종료 트리거는 모두 dE_unbraid(색) 기준이다(trainer.py:522-537).
+#   방향 정렬 판정은 epoch_N.pth로 해야 한다.
+
+# 착수 직후 필수 확인 — 벗어나면 즉시 중단:
+#   - step ~10:        lpips_active_fraction ≈ 0.40 ± 0.03   (run5 실측 0.4026)
+#   - 전 구간:         densify_t 로그 키가 아예 없어야 한다   (있으면 densify가 안 꺼진 것)
+#   - step ~100, ~200: R_lpips 중앙 ≈ 0.30, 허용 0.199~0.531  ★ 이 run의 목표값 검증.
+#                      ⚠️ 밴드가 넓은 것은 정상이다 — run5_1 실측 R이 이미 0.0181~0.0483으로
+#                        2.7배 산포하며(n=28), 그 산포를 11배 환산한 값이 이 밴드다.
+#                        단일 스텝 스냅샷 하나로 판단하지 말고 여러 스텝을 모아 중앙값으로 볼 것.
+#                      0.027 근처면 w가 반영 안 된 것(= run5_1 재실행)이므로 즉시 중단.
+#                      ⚠️ R은 학습이 진행되면 목표값 아래로 내려간다 — w가 크면 모델이 LPIPS를
+#                        더 줄여 l_lpips 자체가 작아지기 때문이다. 목표 R은 유지되는 값이 아니라
+#                        "초기 조건"이므로, 후반 epoch에서 낮아지는 것은 이상이 아니다.
+#   - 전 구간:         s_raw 28~51, clamp_hi/clamp_lo 0%   (run4 실측 밴드)
+#   - ★ grad_clipped 비율(로그 키, trainer.py에서 2026-08-07 추가) — w를 11배 올리므로
+#     두 run 중 clip이 걸릴 위험이 가장 크다. 상시 clip 상태면 의도한 R이 실제로 전달되지
+#     않으므로(유효 세기가 잘림) 그 자체를 결과로 기록하고 판단할 것(§3.3-e).
+#     grad_clipped가 1.0에 붙어 있으면 "w를 올렸으나 전달되지 않았다"가 결론이며,
+#     이때는 R 비교가 아니라 clip 자체를 보고해야 한다.
+#   - ★ epoch 1~2의 flow loss 추이 — run3(R≈1.016)에서는 LPIPS 활성 epoch에 flow loss가
+#     반등했다([0730]results.md §3-2). 같은 반등이 보이면 R이 과하다는 신호다.
+#   - 소요: LPIPS가 1 epoch부터 상시 활성이므로 3.16 s/it × 187 step ≈ 10분/epoch
+#           → 15 epoch ≈ 2.5h + 매 epoch perceptual val 오버헤드 (run5_1과 동일)
+
+# 판정 (§3.3-e): §2의 8장×4 seed 방향 지표 + [0805]results.md §3의 색·구조 지표.
+#   ⚠️ 방향 지표만으로는 frizz와 sharpness를 구별하지 못한다. 이 run은 두 값 중 frizz 위험이
+#      큰 쪽이므로, epoch 5/10/15 산출물의 정성 관찰(가닥 뻣뻣함·고주파 곱슬)이 필수다.

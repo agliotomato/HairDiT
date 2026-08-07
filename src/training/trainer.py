@@ -190,6 +190,13 @@ class Trainer:
         self._patience     = 0
         self.early_stopping = config["training"].get("early_stopping", True)
 
+        # 2026-08-07: 학습 시드는 의도적으로 고정하지 않는다(run4~run5_x와 동일 관행 유지).
+        # 다만 지금까지는 OS 엔트로피로 뽑힌 값이 기록조차 되지 않아 재현이 불가능했다.
+        # 값을 읽어 남기기만 하므로 난수열은 전혀 바뀌지 않는다 — 셀당 n=1인 비교에서
+        # run 간 차이가 조건 때문인지 시드 때문인지 사후에 따져볼 유일한 단서가 된다.
+        self.torch_seed = torch.initial_seed()
+        self.accelerator.print(f"[seed] torch.initial_seed()={self.torch_seed} (미고정 — 기록용)")
+
         self._restore_training_state()
 
     # ------------------------------------------------------------------
@@ -715,10 +722,19 @@ class Trainer:
             self.accelerator.backward(total_loss)
 
             if self.accelerator.sync_gradients:
-                self.accelerator.clip_grad_norm_(
+                # 2026-08-07 (run6 LPIPS 세기 스윕): 반환값은 clip "전" total norm이다.
+                # w_lpips를 올리면 clip이 상시 발동해 의도한 R이 실제로는 전달되지 않을 수
+                # 있는데, 반환값을 버리면 사후에도 그 판별이 불가능하다(로그에 흔적이 없음).
+                # 값을 읽어 기록만 하므로 학습 거동은 완전히 불변이다.
+                total_norm = self.accelerator.clip_grad_norm_(
                     self.controlnet.parameters(),
                     max_norm=grad_clip,
                 )
+                # accelerate는 일부 분산 구성에서 None을 반환할 수 있어 방어한다.
+                if total_norm is not None:
+                    total_norm = float(total_norm)
+                    log_dict["grad_norm"]    = total_norm
+                    log_dict["grad_clipped"] = float(total_norm > grad_clip)
 
             self.optimizer.step()
             self.optimizer.zero_grad()
